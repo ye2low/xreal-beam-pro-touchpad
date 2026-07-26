@@ -35,6 +35,32 @@ class TouchpadAccessibilityService : AccessibilityService() {
         // Invoked when an editable view on the external display gains focus.
         var onExternalTextFocus: (() -> Unit)? = null
 
+        // The field last focused on the external display. Held on to deliberately: once the
+        // phone's keyboard opens, focus moves to this app, so the node can no longer be
+        // looked up — but it is still the field the user means to type into.
+        private var remoteField: android.view.accessibility.AccessibilityNodeInfo? = null
+
+        // Writes straight into that field. Going through the node rather than synthesising
+        // key events is what makes non-Latin text work at all: a key event carries a key
+        // code, and there is no key code for "я".
+        fun writeRemoteText(text: String): Boolean {
+            val node = remoteField ?: return false
+            val args = android.os.Bundle().apply {
+                putCharSequence(
+                    android.view.accessibility.AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE,
+                    text,
+                )
+            }
+            return runCatching {
+                node.performAction(
+                    android.view.accessibility.AccessibilityNodeInfo.ACTION_SET_TEXT,
+                    args,
+                )
+            }.getOrDefault(false)
+        }
+
+        fun remoteFieldText(): String = remoteField?.text?.toString().orEmpty()
+
         var cursorX = 540f
         var cursorY = 960f
         var externalDisplayWidth = 1920
@@ -192,6 +218,7 @@ class TouchpadAccessibilityService : AccessibilityService() {
         if (!source.isEditable || !source.isVisibleToUser) return
         val displayId = source.window?.displayId ?: Display.DEFAULT_DISPLAY
         if (displayId != Display.DEFAULT_DISPLAY) {
+            remoteField = source
             onExternalTextFocus?.invoke()
         }
     }

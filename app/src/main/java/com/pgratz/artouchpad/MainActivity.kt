@@ -31,6 +31,15 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+
+        // No focus flags here. FLAG_NOT_FOCUSABLE was added back when the keyboard vanished
+        // on every touch, but that was a symptom of the IME policy being silently overridden
+        // — with the policy now in effect the keyboard stays put on its own. The flag has to
+        // go, because a non-focusable window is treated as unconnected to the keyboard and is
+        // never told its height, so the touchpad could not shrink and the keyboard simply
+        // covered it.
+        window.setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
+
         setContent {
             ARTouchpadTheme {
                 TouchpadScreen(viewModel = viewModel)

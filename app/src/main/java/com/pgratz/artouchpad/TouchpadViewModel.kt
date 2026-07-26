@@ -102,22 +102,24 @@ class TouchpadViewModel(app: Application) : AndroidViewModel(app) {
         displayManager.registerDisplayListener(displayListener, null)
         refresh()
         mouse.bind()
+        // Tapping a text field on the glasses raises the keyboard here, on the phone, by
+        // giving focus to a hidden field inside this window. The keyboard follows the
+        // window that owns the focused field, and this window lives on the phone — which
+        // is the whole trick, since the system's own per-display IME policy is applied
+        // successfully on this build and still leaves the keyboard on the glasses.
         TouchpadAccessibilityService.onExternalTextFocus = {
-            // With the fallback IME policy active, Android shows the phone-side keyboard on
-            // its own and keystrokes flow directly to the field on the glasses — nothing to do
-            // (a BACK press here would dismiss that keyboard).
-            if (!_state.value.dexKeyboardActive && !_state.value.showKeyboard) {
-                _state.update { it.copy(showKeyboard = true) }
-                // Dismiss the glasses-side IME that Android auto-showed.
-                // BACK is consumed by the IME (dismisses it) and never reaches the app,
-                // so Chrome's text field stays focused and ready for our injected text.
-                viewModelScope.launch {
-                    delay(400)
-                    mouse.pressKey(android.view.KeyEvent.KEYCODE_BACK)
-                }
-            }
+            _state.update { it.copy(showKeyboard = true) }
         }
     }
+
+    // Mirrors what is typed here into the field on the glasses. Text is written into the
+    // field directly rather than replayed as key presses, so Cyrillic and anything else
+    // without a key code arrives intact.
+    fun writeRemoteText(text: String) {
+        TouchpadAccessibilityService.writeRemoteText(text)
+    }
+
+    fun hideKeyboard() = _state.update { it.copy(showKeyboard = false) }
 
     // Enumerates all displays via DisplayManager; picks the first non-default display as the
     // target (glasses). Updates state with display list, cursor center, and all status flags.
@@ -179,7 +181,10 @@ class TouchpadViewModel(app: Application) : AndroidViewModel(app) {
     // only when the fallback policy actually took effect on this build.
     private fun applyImePolicy(displayId: Int) {
         val policy = if (_state.value.dexKeyboardEnabled) IME_POLICY_FALLBACK else IME_POLICY_LOCAL
-        if (appliedImePolicy == displayId to policy) return
+        // Deliberately not skipped when it looks already applied. The external display is
+        // re-registered under a new id whenever the glasses change mode, and the policy is
+        // attached to the id — caching it once let the keyboard drift back onto the external
+        // screen after such a change, with nothing in the log to show for it.
         viewModelScope.launch(Dispatchers.IO) {
             val ok = mouse.setImePolicy(displayId, policy)
             appliedImePolicy = if (ok) displayId to policy else null

@@ -84,7 +84,10 @@ fun TouchpadScreen(viewModel: TouchpadViewModel) {
         modifier = Modifier
             .fillMaxSize()
             .background(BG)
-            .systemBarsPadding(),
+            .systemBarsPadding()
+            // Standard behaviour: when the keyboard comes up, everything above it shrinks
+            // to fit, so the touchpad simply gets shorter instead of being covered.
+            .imePadding(),
     ) {
         StatusBar(
             shizukuAvailable = state.shizukuAvailable,
@@ -93,6 +96,7 @@ fun TouchpadScreen(viewModel: TouchpadViewModel) {
             serviceEnabled = state.isServiceEnabled,
             targetDisplay = state.targetDisplay,
             touchMode = state.touchMode,
+            onBack = { viewModel.pressKey(AKeyEvent.KEYCODE_BACK) },
             onSettingsClick = viewModel::toggleSettings,
             onGrantShizuku = viewModel::requestShizukuPermission,
             onConnectMouse = { viewModel.mouse.bind() },
@@ -134,19 +138,8 @@ fun TouchpadScreen(viewModel: TouchpadViewModel) {
                 onSelectStart = viewModel::startSelectDrag,
                 onSelectEnd = viewModel::endSelectDrag,
             )
-            if (state.showKeyboard) {
-                KeyboardProxy(
-                    onSend    = { text -> viewModel.sendKeyboardText(text) },
-                    onDismiss = viewModel::toggleKeyboard,
-                )
-            }
-            NavigationBar(
-                keyboardActive = state.showKeyboard,
-                onBack         = { viewModel.pressKey(AKeyEvent.KEYCODE_BACK) },
-                onHome         = { viewModel.pressKey(AKeyEvent.KEYCODE_HOME) },
-                onRecents      = { viewModel.pressKey(AKeyEvent.KEYCODE_APP_SWITCH) },
-                onToggleKeyboard = viewModel::toggleKeyboard,
-            )
+            // No navigation row: the glasses already take system swipes, so on-screen
+            // Back/Home/Apps only ate height that the touchpad can use.
         }
     }
 }
@@ -162,6 +155,7 @@ private fun StatusBar(
     serviceEnabled: Boolean,
     targetDisplay: DisplayInfo?,
     touchMode: TouchMode,
+    onBack: () -> Unit,
     onSettingsClick: () -> Unit,
     onGrantShizuku: () -> Unit,
     onConnectMouse: () -> Unit,
@@ -190,6 +184,14 @@ private fun StatusBar(
                     modeLabel?.let { Text(it, color = ACCENT, fontSize = 11.sp) }
                 }
             }
+            // The one navigation key that cannot be replaced by a swipe. Swiping on the
+            // phone drives whatever is on the phone's own screen; this Back is injected at
+            // the display the cursor lives on, so it goes back inside the app being worked
+            // on in the glasses. Home and recents there are reachable by other means.
+            IconButton(onClick = onBack, modifier = Modifier.size(44.dp)) {
+                Text("◀", color = NAV_ICON, fontSize = 20.sp)
+            }
+
             Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
                 when {
                     !shizukuAvailable ->
@@ -540,42 +542,46 @@ private fun KeyboardProxy(
     }
 }
 
-// Bottom navigation row with four buttons: Back, Home, Apps (Recents), and keyboard toggle.
-// The keyboard button is tinted accent when the proxy is active.
+// An invisible one-line field that exists only to own the keyboard. Because it lives in
+// this window, and this window is on the phone, the keyboard opens on the phone — while the
+// text goes to the field the user actually tapped, over on the glasses.
 @Composable
-private fun NavigationBar(
-    keyboardActive: Boolean,
-    onBack: () -> Unit,
-    onHome: () -> Unit,
-    onRecents: () -> Unit,
-    onToggleKeyboard: () -> Unit,
+private fun RemoteTextInput(
+    onText: (String) -> Unit,
+    onDone: () -> Unit,
 ) {
-    HorizontalDivider(color = Color(0xFF1E2A38), thickness = 1.dp)
-    Row(
+    AndroidView(
+        factory = { ctx ->
+            EditText(ctx).apply {
+                setBackgroundColor(android.graphics.Color.TRANSPARENT)
+                setTextColor(android.graphics.Color.TRANSPARENT)
+                isCursorVisible = false
+                isFocusable = true
+                isFocusableInTouchMode = true
+                imeOptions = EditorInfo.IME_ACTION_DONE or EditorInfo.IME_FLAG_NO_EXTRACT_UI
+                addTextChangedListener(object : android.text.TextWatcher {
+                    override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+                    override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+                    // Every keystroke is mirrored immediately, so the text appears in the
+                    // remote field as it is typed instead of arriving in one lump.
+                    override fun afterTextChanged(s: android.text.Editable?) {
+                        onText(s?.toString().orEmpty())
+                    }
+                })
+                setOnEditorActionListener { _, actionId, _ ->
+                    if (actionId == EditorInfo.IME_ACTION_DONE) { onDone(); true } else false
+                }
+            }
+        },
+        update = { view ->
+            view.requestFocus()
+            val imm = view.context.getSystemService(InputMethodManager::class.java)
+            imm?.showSoftInput(view, InputMethodManager.SHOW_IMPLICIT)
+        },
         modifier = Modifier
             .fillMaxWidth()
-            .background(BG)
-            .padding(vertical = 8.dp),
-        horizontalArrangement = Arrangement.SpaceEvenly,
-    ) {
-        NavButton("◀", "Back", onBack)
-        NavButton("⬤", "Home", onHome)
-        NavButton("▦", "Apps", onRecents)
-        NavButton("⌨", "Keys", onToggleKeyboard,
-            tint = if (keyboardActive) ACCENT else NAV_ICON)
-    }
-}
-
-// A centered icon + small label stacked in a column; tint defaults to NAV_ICON gray
-// but can be overridden (e.g. ACCENT) to indicate an active state.
-@Composable
-private fun NavButton(icon: String, label: String, onClick: () -> Unit, tint: Color = NAV_ICON) {
-    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        IconButton(onClick = onClick, modifier = Modifier.size(52.dp)) {
-            Text(icon, color = tint, fontSize = 22.sp)
-        }
-        Text(label, color = TEXT_MUTED, fontSize = 10.sp)
-    }
+            .height(1.dp),
+    )
 }
 
 // Full-screen settings overlay (shown instead of the touchpad when gear is tapped).

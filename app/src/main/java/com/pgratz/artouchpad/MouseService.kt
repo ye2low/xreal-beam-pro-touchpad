@@ -347,7 +347,15 @@ class MouseService : IMouseService.Stub() {
         val method = iwmSetImePolicy ?: run { Log.e(TAG, "setDisplayImePolicy unavailable"); return false }
         return runCatching {
             method.invoke(iwm, displayId, policy)
-            Log.i(TAG, "setDisplayImePolicy display=$displayId policy=$policy")
+            // Read it straight back. AOSP's DisplayContent.getImePolicy() rewrites
+            // FALLBACK_DISPLAY to LOCAL whenever force_desktop_mode_on_external_displays is
+            // on, so the write can "succeed" and mean nothing — this is the only way to see
+            // what the system will actually use.
+            val effective = runCatching {
+                iwm.javaClass.getMethod("getDisplayImePolicy", Int::class.javaPrimitiveType)
+                    .invoke(iwm, displayId) as? Int
+            }.getOrNull()
+            Log.i(TAG, "setDisplayImePolicy display=$displayId requested=$policy effective=$effective")
             true
         }.getOrElse {
             Log.w(TAG, "setDisplayImePolicy failed: $it")
