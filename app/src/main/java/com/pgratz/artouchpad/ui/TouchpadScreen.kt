@@ -131,12 +131,9 @@ fun TouchpadScreen(viewModel: TouchpadViewModel) {
                 onMoveCursor = viewModel::moveCursor,
                 onClick = { viewModel.performClick() },
                 onDoubleClick = { viewModel.performDoubleClick() },
-                onRightClick = { viewModel.performRightClick() },
                 onScroll = viewModel::performScroll,
                 onPinch = viewModel::pinchZoom,
                 onTouchModeChanged = viewModel::setTouchMode,
-                onSelectStart = viewModel::startSelectDrag,
-                onSelectEnd = viewModel::endSelectDrag,
             )
             // No navigation row: the glasses already take system swipes, so on-screen
             // Back/Home/Apps only ate height that the touchpad can use.
@@ -247,12 +244,9 @@ private fun TouchpadSurface(
     onMoveCursor: (Float, Float) -> Unit,
     onClick: () -> Unit,
     onDoubleClick: () -> Unit,
-    onRightClick: () -> Unit,
     onScroll: (Float, Float) -> Unit,
     onPinch: (Float) -> Unit,
     onTouchModeChanged: (TouchMode) -> Unit,
-    onSelectStart: () -> Unit,
-    onSelectEnd: () -> Unit,
 ) {
     var touchPoints by remember { mutableStateOf(listOf<Offset>()) }
     val haptic = LocalHapticFeedback.current
@@ -273,14 +267,9 @@ private fun TouchpadSurface(
                     var downTime = 0L
                     var didMove = false
                     var lastTapTime = 0L
-                    var isLongPress = false
-                    var isSelectMode = false
-                    var longPressJob: Job? = null
                     var lastLoggedFingers = -1
 
                     coroutineScope {
-                        val scope = this  // CoroutineScope for launching the long-press timer
-
                         awaitPointerEventScope {
                             while (true) {
                                 val event = awaitPointerEvent(PointerEventPass.Initial)
@@ -304,9 +293,6 @@ private fun TouchpadSurface(
                                 }
 
                                 if (justPressed.isNotEmpty() && pressed.size == 1) {
-                                    longPressJob?.cancel()
-                                    isLongPress = false
-                                    isSelectMode = false
                                     downTime = now
                                     didMove = false
                                     lastPositions = pressed.associate { it.id to it.position }
@@ -334,10 +320,32 @@ private fun TouchpadSurface(
                                         p.consume()
                                     }
                                     2 -> {
-                                        // Two fingers do nothing here: this surface moves the
-                                        // cursor and nothing else. Clicking belongs to the
-                                        // button below, the way a touchpad's button works.
-                                        lastPositions = pressed.associate { it.id to it.position }
+                                        val newPositions = pressed.associate { it.id to it.position }
+                                        if (lastPositions.size == 2) {
+                                            val ids = pressed.map { it.id }
+                                            val p0prev = lastPositions[ids[0]]
+                                            val p1prev = lastPositions[ids[1]]
+                                            val p0curr = newPositions[ids[0]]
+                                            val p1curr = newPositions[ids[1]]
+                                            if (p0prev != null && p1prev != null && p0curr != null && p1curr != null) {
+                                                val dx = ((p0curr.x - p0prev.x) + (p1curr.x - p1prev.x)) / 2f
+                                                val dy = ((p0curr.y - p0prev.y) + (p1curr.y - p1prev.y)) / 2f
+                                                val pdx = p1prev.x - p0prev.x; val pdy = p1prev.y - p0prev.y
+                                                val cdx = p1curr.x - p0curr.x; val cdy = p1curr.y - p0curr.y
+                                                val dSpan = sqrt(cdx * cdx + cdy * cdy) - sqrt(pdx * pdx + pdy * pdy)
+                                                // Fingers changing their separation faster than
+                                                // they travel together is a pinch; otherwise both
+                                                // are going the same way, which is a scroll.
+                                                if (abs(dSpan) > abs(dx) + abs(dy)) {
+                                                    if (dSpan != 0f) { onPinch(dSpan); didMove = true }
+                                                } else if (dx != 0f || dy != 0f) {
+                                                    onScroll(dx, dy)
+                                                    onTouchModeChanged(TouchMode.SCROLL)
+                                                    didMove = true
+                                                }
+                                            }
+                                        }
+                                        lastPositions = newPositions
                                         pressed.forEach { it.consume() }
                                     }
                                 }
