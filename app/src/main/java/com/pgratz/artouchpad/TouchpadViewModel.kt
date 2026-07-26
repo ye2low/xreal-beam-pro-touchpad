@@ -31,6 +31,13 @@ import kotlinx.coroutines.launch
 
 enum class TouchMode { IDLE, CURSOR, SCROLL, SELECT }
 
+// Anything that outlasts a short tap counts as holding the left button, so the threshold
+// sits just past the tap window rather than at some longer "long press" delay. Movement
+// still cancels it: a finger that sets off across the pad wants to steer the cursor, not
+// to press anything.
+private const val HOLD_TO_PRESS_MS = 240
+private const val HOLD_SLOP_PX = 25
+
 // WindowManager DISPLAY_IME_POLICY_* values, passed to IWindowManager.setDisplayImePolicy.
 private const val IME_POLICY_LOCAL = 0     // IME on the display that owns the focused field
 private const val IME_POLICY_FALLBACK = 1  // IME on the default display (phone) — DeX-style
@@ -148,12 +155,15 @@ class TouchpadViewModel(app: Application) : AndroidViewModel(app) {
                 shizukuAvailable = mouse.hasShizuku(),
                 shizukuPermission = mouse.hasPermission(),
                 mouseReady = mouse.hasPermission() && mouse.isConnected,
+                leftHeld = it.leftHeld,
                 allDisplays = allDisplays,
                 targetDisplay = external,
                 cursorX = if (external != null) external.width / 2f else it.cursorX,
                 cursorY = if (external != null) external.height / 2f else it.cursorY,
             )
         }
+
+        ensurePanelWatch()
     }
 
     // Opens the Shizuku permission dialog so the user can grant shell-uid access.
@@ -220,13 +230,20 @@ class TouchpadViewModel(app: Application) : AndroidViewModel(app) {
     // service watching the panel directly: Android takes this window's touch away about
     // 13 ms after BTN_LEFT goes down, so the UI would otherwise believe the finger had
     // already lifted. While held, the UI polls so the light matches the mouse button.
-    fun leftButtonDown(buttonTopY: Int) {
-        mouse.holdLeftUntilFingersLift(buttonTopY, _state.value.sensitivity)
-        _state.update { it.copy(leftHeld = true) }
+    // Starts the service watching the panel, and mirrors the button state into the UI so the
+    // touchpad edges can light up. Polling is the only way: while the button is held the
+    // window receives no touch at all, so it cannot know anything by itself.
+    private var watchStarted = false
+
+    fun ensurePanelWatch() {
+        if (watchStarted || !_state.value.mouseReady) return
+        watchStarted = true
+        mouse.startPanelWatch(_state.value.sensitivity, HOLD_TO_PRESS_MS, HOLD_SLOP_PX)
         viewModelScope.launch {
-            while (_state.value.leftHeld) {
-                delay(60)
-                if (!mouse.isLeftHeld()) _state.update { it.copy(leftHeld = false) }
+            while (true) {
+                delay(50)
+                val held = mouse.isLeftHeld()
+                if (held != _state.value.leftHeld) _state.update { it.copy(leftHeld = held) }
             }
         }
     }

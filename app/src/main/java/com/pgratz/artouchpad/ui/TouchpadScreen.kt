@@ -123,6 +123,7 @@ fun TouchpadScreen(viewModel: TouchpadViewModel) {
             TouchpadSurface(
                 modifier = Modifier.weight(1f),
                 enabled = state.mouseReady,
+                leftHeld = state.leftHeld,
                 onMoveCursor = viewModel::moveCursor,
                 onClick = { viewModel.performClick() },
                 onDoubleClick = { viewModel.performDoubleClick() },
@@ -132,11 +133,6 @@ fun TouchpadScreen(viewModel: TouchpadViewModel) {
                 onTouchModeChanged = viewModel::setTouchMode,
                 onSelectStart = viewModel::startSelectDrag,
                 onSelectEnd = viewModel::endSelectDrag,
-            )
-            LeftMouseButton(
-                enabled = state.mouseReady,
-                held = state.leftHeld,
-                onDown = viewModel::leftButtonDown,
             )
             if (state.showKeyboard) {
                 KeyboardProxy(
@@ -245,6 +241,7 @@ private fun StatusDot(active: Boolean, label: String) {
 private fun TouchpadSurface(
     modifier: Modifier,
     enabled: Boolean,
+    leftHeld: Boolean,
     onMoveCursor: (Float, Float) -> Unit,
     onClick: () -> Unit,
     onDoubleClick: () -> Unit,
@@ -367,6 +364,18 @@ private fun TouchpadSurface(
                     }
                 },
         ) {
+            // Edges glow while the left button is held — the only outward sign that the
+            // button is down, since the finger doing it looks like any other.
+            if (leftHeld) {
+                val w = 10.dp.toPx()
+                drawRect(
+                    color = ACCENT,
+                    topLeft = Offset(w / 2, w / 2),
+                    size = androidx.compose.ui.geometry.Size(size.width - w, size.height - w),
+                    style = Stroke(width = w),
+                )
+            }
+
             // Dot grid
             val spacing = 32.dp.toPx()
             val cols = (size.width / spacing).toInt() + 1

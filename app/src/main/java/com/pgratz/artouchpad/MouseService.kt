@@ -437,22 +437,33 @@ class MouseService : IMouseService.Stub() {
 
     override fun isLeftHeld(): Boolean = leftHeld
 
-    // Presses BTN_LEFT and watches the physical panel for the finger to leave.
+    @Volatile private var watching = false
+
+    override fun stopPanelWatch() {
+        watching = false
+        releaseHold()
+        synchronized(watchers) {
+            watchers.forEach { runCatching { it.close() } }
+            watchers.clear()
+        }
+    }
+
+    // Watches the panel for the whole session and turns "finger resting in place" into a
+    // held left button, then steers from that same finger.
     //
-    // The app cannot do this: pressing BTN_LEFT makes Android revoke the app window's
-    // touch within about 13 ms, so the finger vanishes from the app's point of view while
-    // still resting on the glass. This service runs as shell (uid 2000, group input), which
-    // is allowed to READ /dev/input — no grab, no interference with normal touch handling.
-    // We simply listen until the panel reports that no finger is left, then release.
-    override fun holdLeftUntilFingersLift(buttonTopY: Int, sensitivity: Float) {
-        if (!uinputReady || leftHeld) return
-        leftHeld = true
-        ev(EV_KEY, BTN_LEFT, 1); sync()
-        Log.d(TAG, "hold: BTN_LEFT down, watching panel (buttonTopY=$buttonTopY)")
+    // The app cannot do any of this itself: pressing BTN_LEFT makes Android revoke the app
+    // window's touch within about 13 ms, so the finger vanishes from the app's point of view
+    // while still resting on the glass. This service runs as shell (uid 2000, group input),
+    // which may READ /dev/input — no grab, no interference with normal touch handling — so
+    // it keeps seeing the finger the window has lost.
+    override fun startPanelWatch(sensitivity: Float, holdMs: Int, slopPx: Int) {
+        if (!uinputReady || watching) return
+        watching = true
+        Log.d(TAG, "panel watch on (hold=${holdMs}ms slop=${slopPx}px)")
 
         // The touchscreen node cannot be identified up front — /proc/bus/input/devices is
         // not readable at this uid — so every readable node is watched and whichever one
-        // reports BTN_TOUCH is the panel.
+        // reports touches is the panel.
         val files = java.io.File("/dev/input").listFiles { f -> f.name.startsWith("event") }
             ?.sortedByDescending { it.name } ?: emptyList()
 
@@ -460,82 +471,134 @@ class MouseService : IMouseService.Stub() {
         for (file in files) {
             val stream = runCatching { java.io.FileInputStream(file) }.getOrNull() ?: continue
             synchronized(watchers) { watchers.add(stream) }
-            Thread {
-                val buf = ByteArray(EVENT_SIZE)
-                // Per-slot tracking, so the finger resting on the button can be told apart
-                // from the one doing the dragging.
-                val x = HashMap<Int, Int>()
-                val y = HashMap<Int, Int>()
-                val prevX = HashMap<Int, Int>()
-                val prevY = HashMap<Int, Int>()
-                var slot = 0
-                var accX = 0f
-                var accY = 0f
-                try {
-                    while (leftHeld) {
-                        var read = 0
-                        while (read < EVENT_SIZE) {
-                            val n = stream.read(buf, read, EVENT_SIZE - read)
-                            if (n < 0) return@Thread
-                            read += n
-                        }
-                        val bb = java.nio.ByteBuffer.wrap(buf).order(java.nio.ByteOrder.LITTLE_ENDIAN)
-                        val type = bb.getShort(16).toInt()
-                        val code = bb.getShort(18).toInt() and 0xFFFF
-                        val value = bb.getInt(20)
-
-                        if (type == EV_KEY && code == BTN_TOUCH && value == 0) {
-                            releaseHold()
-                            return@Thread
-                        }
-                        if (type == EV_ABS) {
-                            when (code) {
-                                ABS_MT_SLOT -> slot = value
-                                ABS_MT_TRACKING_ID -> if (value < 0) {
-                                    x.remove(slot); y.remove(slot)
-                                    prevX.remove(slot); prevY.remove(slot)
-                                }
-                                ABS_MT_POSITION_X -> x[slot] = value
-                                ABS_MT_POSITION_Y -> y[slot] = value
-                            }
-                        }
-                        if (type == EV_SYN && code == SYN_REPORT) {
-                            for ((s, cx) in x) {
-                                val cy = y[s] ?: continue
-                                // Fingers on the button hold it; they must not steer.
-                                if (cy >= buttonTopY) { prevX[s] = cx; prevY[s] = cy; continue }
-                                val px = prevX[s]
-                                val py = prevY[s]
-                                prevX[s] = cx
-                                prevY[s] = cy
-                                if (px == null || py == null) continue
-                                accX += (cx - px) * sensitivity
-                                accY += (cy - py) * sensitivity
-                            }
-                            val ix = accX.toInt()
-                            val iy = accY.toInt()
-                            if (ix != 0 || iy != 0) {
-                                accX -= ix
-                                accY -= iy
-                                if (ix != 0) ev(EV_REL, REL_X, ix)
-                                if (iy != 0) ev(EV_REL, REL_Y, iy)
-                                sync()
-                            }
-                        }
-                    }
-                } catch (_: Exception) {
-                }
-            }.apply { isDaemon = true }.start()
+            Thread { watchLoop(stream, sensitivity, holdMs, slopPx) }
+                .apply { isDaemon = true }.start()
         }
 
-        // Safety net: never leave the button stuck if the panel never reports a lift.
+        // A finger lying perfectly still produces no events at all, so the hold cannot be
+        // detected while reading the panel — it would only fire if the finger happened to
+        // twitch at exactly the right moment. This ticks on its own instead.
         Thread {
-            Thread.sleep(30_000)
-            if (leftHeld) {
-                Log.w(TAG, "hold: watchdog release")
-                releaseHold()
+            while (watching) {
+                Thread.sleep(25)
+                val since = restingSince
+                if (!leftHeld && since != 0L && System.currentTimeMillis() - since >= holdMs) {
+                    leftHeld = true
+                    ev(EV_KEY, BTN_LEFT, 1); sync()
+                    Log.d(TAG, "hold: BTN_LEFT down")
+                }
             }
         }.apply { isDaemon = true }.start()
+    }
+
+    // When the single resting contact landed, or 0 when there is nothing to wait for
+    // (no finger, several fingers, or the finger has wandered off).
+    @Volatile private var restingSince = 0L
+
+    private class Contact {
+        var x = 0
+        var y = 0
+        var downX = 0
+        var downY = 0
+        var downAt = 0L
+        var prevX = 0
+        var prevY = 0
+        // The panel announces a contact's slot and tracking id BEFORE its coordinates, so
+        // the starting point can only be recorded once a full frame has arrived. Taking it
+        // any earlier captures the previous finger's position, which then reads as a huge
+        // jump and marks the contact as wandering the moment it truly appears.
+        var placed = false
+        var strayed = false  // travelled beyond the slop, so it is a swipe, not a rest
+    }
+
+    private fun watchLoop(stream: java.io.FileInputStream, sensitivity: Float, holdMs: Int, slopPx: Int) {
+        val buf = ByteArray(EVENT_SIZE)
+        val contacts = HashMap<Int, Contact>()
+        var slot = 0
+        var pendingX = 0
+        var pendingY = 0
+        var accX = 0f
+        var accY = 0f
+        var steering = false
+        try {
+            while (watching) {
+                var read = 0
+                while (read < EVENT_SIZE) {
+                    val n = stream.read(buf, read, EVENT_SIZE - read)
+                    if (n < 0) return
+                    read += n
+                }
+                val bb = java.nio.ByteBuffer.wrap(buf).order(java.nio.ByteOrder.LITTLE_ENDIAN)
+                val type = bb.getShort(16).toInt()
+                val code = bb.getShort(18).toInt() and 0xFFFF
+                val value = bb.getInt(20)
+
+                if (type == EV_KEY && code == BTN_TOUCH && value == 0) {
+                    contacts.clear()
+                    restingSince = 0L
+                    steering = false
+                    releaseHold()
+                    continue
+                }
+                if (type == EV_ABS) {
+                    when (code) {
+                        ABS_MT_SLOT -> slot = value
+                        ABS_MT_TRACKING_ID ->
+                            if (value < 0) contacts.remove(slot) else contacts[slot] = Contact()
+                        ABS_MT_POSITION_X -> contacts[slot]?.x = value
+                        ABS_MT_POSITION_Y -> contacts[slot]?.y = value
+                    }
+                    continue
+                }
+                if (type != EV_SYN || code != SYN_REPORT) continue
+
+                for (c in contacts.values) {
+                    if (!c.placed) {
+                        // First complete frame for this contact: this is where it landed.
+                        c.placed = true
+                        c.downX = c.x
+                        c.downY = c.y
+                        c.prevX = c.x
+                        c.prevY = c.y
+                        c.downAt = System.currentTimeMillis()
+                        continue
+                    }
+                    val dist = kotlin.math.hypot((c.x - c.downX).toFloat(), (c.y - c.downY).toFloat())
+                    if (dist > slopPx) c.strayed = true
+                }
+
+                // Publish what the ticker needs: a lone finger that has not wandered off.
+                val candidate = contacts.values.singleOrNull()?.takeIf { it.placed && !it.strayed }
+                restingSince = candidate?.downAt ?: 0L
+
+                if (leftHeld) {
+                    if (!steering) {
+                        // Start steering from where the fingers are now, so the press itself
+                        // does not fling the cursor by the distance accumulated before it.
+                        contacts.values.forEach { it.prevX = it.x; it.prevY = it.y }
+                        steering = true
+                    }
+                    for (c in contacts.values) {
+                        accX += (c.x - c.prevX) * sensitivity
+                        accY += (c.y - c.prevY) * sensitivity
+                        c.prevX = c.x
+                        c.prevY = c.y
+                    }
+                    val ix = accX.toInt()
+                    val iy = accY.toInt()
+                    if (ix != 0 || iy != 0) {
+                        accX -= ix
+                        accY -= iy
+                        if (ix != 0) ev(EV_REL, REL_X, ix)
+                        if (iy != 0) ev(EV_REL, REL_Y, iy)
+                        sync()
+                    }
+                } else {
+                    steering = false
+                }
+            }
+        } catch (_: Exception) {
+        }
     }
 
     private fun releaseHold() {
@@ -543,10 +606,6 @@ class MouseService : IMouseService.Stub() {
         leftHeld = false
         ev(EV_KEY, BTN_LEFT, 0); sync()
         Log.d(TAG, "hold: BTN_LEFT up")
-        synchronized(watchers) {
-            watchers.forEach { runCatching { it.close() } }
-            watchers.clear()
-        }
     }
 
     // Closes the uinput file descriptor via JNI (sends UI_DEV_DESTROY internally) and marks

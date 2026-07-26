@@ -159,9 +159,10 @@ class ShizukuMouseController {
     // Holds BTN_LEFT until the panel reports every finger gone; the service watches
     // /dev/input itself, because the app's own touch is revoked the moment the button
     // goes down.
-    fun holdLeftUntilFingersLift(buttonTopY: Int, sensitivity: Float) {
-        runCatching { service?.holdLeftUntilFingersLift(buttonTopY, sensitivity) }
+    fun startPanelWatch(sensitivity: Float, holdMs: Int, slopPx: Int) {
+        runCatching { service?.startPanelWatch(sensitivity, holdMs, slopPx) }
     }
+    fun stopPanelWatch() { runCatching { service?.stopPanelWatch() } }
     fun isLeftHeld(): Boolean = runCatching { service?.isLeftHeld() ?: false }.getOrDefault(false)
 
     // Presses BTN_LEFT without releasing — call moveMouse while held for click-drag selection.

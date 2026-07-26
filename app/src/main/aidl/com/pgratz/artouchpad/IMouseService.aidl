@@ -68,11 +68,16 @@ interface IMouseService {
     // The window cannot do this itself: Android revokes its touch ~13 ms after BTN_LEFT
     // goes down, so it never learns that the finger lifted. This service runs as shell,
     // which may read /dev/input directly, and so can watch the panel itself.
-    // While held, the service also drives the cursor from the panel itself: the app window
-    // receives no touch at all once BTN_LEFT is down (measured — zero events for the whole
-    // hold), so movement has to come from somewhere else.
-    // buttonTopY: fingers at or below this row are on the button and must not move anything.
-    void holdLeftUntilFingersLift(int buttonTopY, float sensitivity) = 13;
+    // Watches the touchscreen directly for the whole session. A finger that rests without
+    // moving for holdMs presses BTN_LEFT and keeps it down; from then on that finger drags,
+    // and releasing it releases the button — the same thing a hand does with a mouse.
+    //
+    // This has to live in the service rather than the app: Android revokes the app window's
+    // touch about 13 ms after BTN_LEFT goes down (measured — zero events reached the window
+    // for an entire 9.5 s hold), so the app cannot see the finger it is supposed to follow.
+    // The service runs as shell and may read /dev/input, so it keeps seeing everything.
+    void startPanelWatch(float sensitivity, int holdMs, int slopPx) = 13;
+    void stopPanelWatch() = 15;
 
     // True while the hold above is still in effect, so the button can stay lit.
     boolean isLeftHeld() = 14;
