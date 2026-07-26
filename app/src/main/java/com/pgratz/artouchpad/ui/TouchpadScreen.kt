@@ -38,6 +38,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.*
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
@@ -133,8 +135,8 @@ fun TouchpadScreen(viewModel: TouchpadViewModel) {
             )
             LeftMouseButton(
                 enabled = state.mouseReady,
+                held = state.leftHeld,
                 onDown = viewModel::leftButtonDown,
-                onUp = viewModel::leftButtonUp,
             )
             if (state.showKeyboard) {
                 KeyboardProxy(
@@ -275,6 +277,7 @@ private fun TouchpadSurface(
                     var isLongPress = false
                     var isSelectMode = false
                     var longPressJob: Job? = null
+                    var lastLoggedFingers = -1
 
                     coroutineScope {
                         val scope = this  // CoroutineScope for launching the long-press timer
@@ -288,6 +291,18 @@ private fun TouchpadSurface(
                                 val justReleased = event.changes.filter { !it.pressed && it.previousPressed }
 
                                 touchPoints = pressed.map { it.position }
+
+                                // Diagnostic: how many fingers this surface actually sees.
+                                // Kept on because the window goes deaf whenever BTN_LEFT is
+                                // held, and this is the only way to tell "no events arrived"
+                                // apart from "events arrived and we mishandled them".
+                                if (pressed.size != lastLoggedFingers) {
+                                    lastLoggedFingers = pressed.size
+                                    android.util.Log.d(
+                                        "TouchpadSurface",
+                                        "fingers=${pressed.size} down=${justPressed.size} up=${justReleased.size}",
+                                    )
+                                }
 
                                 if (justPressed.isNotEmpty() && pressed.size == 1) {
                                     longPressJob?.cancel()
@@ -329,7 +344,21 @@ private fun TouchpadSurface(
                                 }
 
                                 if (justReleased.isNotEmpty() && pressed.isEmpty()) {
+                                    val duration = now - downTime
                                     onTouchModeChanged(TouchMode.IDLE)
+
+                                    // A quick tap that went nowhere is a left click, the same
+                                    // as tapping a physical touchpad. Holding still is not a
+                                    // gesture here — that is what the button below is for.
+                                    if (!didMove && duration < TAP_MAX_MS) {
+                                        if (now - lastTapTime < DOUBLE_TAP_WINDOW_MS) {
+                                            onDoubleClick()
+                                            lastTapTime = 0L
+                                        } else {
+                                            onClick()
+                                            lastTapTime = now
+                                        }
+                                    }
                                     lastPositions = emptyMap()
                                     touchPoints = emptyList()
                                 }
@@ -387,9 +416,12 @@ private fun TouchpadSurface(
 @Composable
 private fun LeftMouseButton(
     enabled: Boolean,
-    onDown: () -> Unit,
-    onUp: () -> Unit,
+    held: Boolean,
+    onDown: (buttonTopY: Int) -> Unit,
 ) {
+    // Where this button sits on the panel, in screen rows. The service needs it to tell the
+    // finger that is holding the button from the finger that is steering.
+    var topY by remember { mutableStateOf(Int.MAX_VALUE) }
     // The same press tracking the navigation buttons below use, rather than a hand-rolled
     // pointer loop: the framework owns the press state, so the button lights up and holds
     // exactly like every other button in the app.
@@ -397,23 +429,14 @@ private fun LeftMouseButton(
     val touching by interaction.collectIsPressedAsState()
     val haptic = LocalHapticFeedback.current
 
-    // The button latches rather than following the finger, because it cannot follow the
-    // finger: Android revokes this window's touch about 13 ms after BTN_LEFT goes down, so
-    // the app is never told when the finger lifts. Each tap toggles, and the light now
-    // reflects the true state of the mouse button instead of the state of the finger.
-    var held by remember { mutableStateOf(false) }
-
+    // A finger landing starts the hold; the service ends it when the panel says every
+    // finger is gone. `held` therefore comes from the mouse button's real state, not from
+    // this window's touch — which Android revokes the instant the button goes down.
     LaunchedEffect(touching) {
         if (touching) {
-            held = !held
             haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-            if (held) onDown() else onUp()
+            onDown(topY)
         }
-    }
-
-    // Never leave the mouse button stuck down if this screen goes away mid-drag.
-    DisposableEffect(Unit) {
-        onDispose { if (held) onUp() }
     }
 
     HorizontalDivider(color = Color(0xFF1E2A38), thickness = 1.dp)
@@ -421,6 +444,7 @@ private fun LeftMouseButton(
         modifier = Modifier
             .fillMaxWidth()
             .height(64.dp)
+            .onGloballyPositioned { topY = it.positionInWindow().y.toInt() }
             .padding(horizontal = 12.dp, vertical = 6.dp)
             .clip(RoundedCornerShape(14.dp))
             .background(
@@ -439,7 +463,7 @@ private fun LeftMouseButton(
         contentAlignment = Alignment.Center,
     ) {
         Text(
-            if (held) "ЗАЖАТА — нажми, чтобы отпустить" else "левая кнопка",
+            if (held) "ДЕРЖУ" else "левая кнопка",
             color = if (held) Color(0xFF06202E) else TEXT_DIM,
             fontSize = 15.sp,
             fontWeight = if (held) FontWeight.Bold else FontWeight.Normal,

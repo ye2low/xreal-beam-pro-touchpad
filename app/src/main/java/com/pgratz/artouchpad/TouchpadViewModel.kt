@@ -52,6 +52,8 @@ data class TouchpadState(
     val showSettings: Boolean = false,
     val touchMode: TouchMode = TouchMode.IDLE,
     val showKeyboard: Boolean = false,
+    // True while the on-screen left button holds BTN_LEFT down.
+    val leftHeld: Boolean = false,
     // User preference: show the keyboard on the phone (IME fallback policy) instead of
     // on the glasses. dexKeyboardActive reflects whether the policy actually took effect
     // (false when `wm set-display-ime-policy` is unsupported on this build).
@@ -214,10 +216,20 @@ class TouchpadViewModel(app: Application) : AndroidViewModel(app) {
     fun performDoubleClick() = mouse.doubleClick(_state.value.cursorX, _state.value.cursorY)
     fun performRightClick() = mouse.rightClick(_state.value.cursorX, _state.value.cursorY)
 
-    // The on-screen left button: held for exactly as long as a finger rests on it, so a
-    // second finger can move the cursor meanwhile — the way a physical touchpad button works.
-    fun leftButtonDown() = mouse.mouseDown()
-    fun leftButtonUp() = mouse.mouseUp()
+    // The on-screen left button. The press starts here, but the release is decided by the
+    // service watching the panel directly: Android takes this window's touch away about
+    // 13 ms after BTN_LEFT goes down, so the UI would otherwise believe the finger had
+    // already lifted. While held, the UI polls so the light matches the mouse button.
+    fun leftButtonDown(buttonTopY: Int) {
+        mouse.holdLeftUntilFingersLift(buttonTopY, _state.value.sensitivity)
+        _state.update { it.copy(leftHeld = true) }
+        viewModelScope.launch {
+            while (_state.value.leftHeld) {
+                delay(60)
+                if (!mouse.isLeftHeld()) _state.update { it.copy(leftHeld = false) }
+            }
+        }
+    }
 
     // Presses BTN_LEFT without releasing; moveCursor calls while held extend a text selection.
     fun startSelectDrag() = mouse.mouseDown()

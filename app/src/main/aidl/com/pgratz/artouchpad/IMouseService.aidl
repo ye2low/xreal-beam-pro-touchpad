@@ -64,6 +64,19 @@ interface IMouseService {
     // Returns true if the call succeeded; false if unsupported on this build.
     boolean setImePolicy(int displayId, int policy) = 12;
 
+    // Holds BTN_LEFT down and releases it when every finger has left the touchscreen.
+    // The window cannot do this itself: Android revokes its touch ~13 ms after BTN_LEFT
+    // goes down, so it never learns that the finger lifted. This service runs as shell,
+    // which may read /dev/input directly, and so can watch the panel itself.
+    // While held, the service also drives the cursor from the panel itself: the app window
+    // receives no touch at all once BTN_LEFT is down (measured — zero events for the whole
+    // hold), so movement has to come from somewhere else.
+    // buttonTopY: fingers at or below this row are on the button and must not move anything.
+    void holdLeftUntilFingersLift(int buttonTopY, float sensitivity) = 13;
+
+    // True while the hold above is still in effect, so the button can stay lit.
+    boolean isLeftHeld() = 14;
+
     // Closes the uinput file descriptor and marks the device not ready.
     void destroy() = 16777114;
 }

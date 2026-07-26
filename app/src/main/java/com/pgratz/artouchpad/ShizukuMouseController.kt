@@ -156,6 +156,14 @@ class ShizukuMouseController {
         runCatching { service?.setFontScale(scale) }
     }
 
+    // Holds BTN_LEFT until the panel reports every finger gone; the service watches
+    // /dev/input itself, because the app's own touch is revoked the moment the button
+    // goes down.
+    fun holdLeftUntilFingersLift(buttonTopY: Int, sensitivity: Float) {
+        runCatching { service?.holdLeftUntilFingersLift(buttonTopY, sensitivity) }
+    }
+    fun isLeftHeld(): Boolean = runCatching { service?.isLeftHeld() ?: false }.getOrDefault(false)
+
     // Presses BTN_LEFT without releasing — call moveMouse while held for click-drag selection.
     fun mouseDown() { runCatching { service?.mouseDown() } }
     // Releases BTN_LEFT pressed by mouseDown().

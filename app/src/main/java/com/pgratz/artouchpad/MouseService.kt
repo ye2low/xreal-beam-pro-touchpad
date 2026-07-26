@@ -432,6 +432,123 @@ class MouseService : IMouseService.Stub() {
         Log.d(TAG, "mouseUp displayId=$displayId")
     }
 
+    @Volatile private var leftHeld = false
+    private var watchers = mutableListOf<java.io.FileInputStream>()
+
+    override fun isLeftHeld(): Boolean = leftHeld
+
+    // Presses BTN_LEFT and watches the physical panel for the finger to leave.
+    //
+    // The app cannot do this: pressing BTN_LEFT makes Android revoke the app window's
+    // touch within about 13 ms, so the finger vanishes from the app's point of view while
+    // still resting on the glass. This service runs as shell (uid 2000, group input), which
+    // is allowed to READ /dev/input — no grab, no interference with normal touch handling.
+    // We simply listen until the panel reports that no finger is left, then release.
+    override fun holdLeftUntilFingersLift(buttonTopY: Int, sensitivity: Float) {
+        if (!uinputReady || leftHeld) return
+        leftHeld = true
+        ev(EV_KEY, BTN_LEFT, 1); sync()
+        Log.d(TAG, "hold: BTN_LEFT down, watching panel (buttonTopY=$buttonTopY)")
+
+        // The touchscreen node cannot be identified up front — /proc/bus/input/devices is
+        // not readable at this uid — so every readable node is watched and whichever one
+        // reports BTN_TOUCH is the panel.
+        val files = java.io.File("/dev/input").listFiles { f -> f.name.startsWith("event") }
+            ?.sortedByDescending { it.name } ?: emptyList()
+
+        synchronized(watchers) { watchers.clear() }
+        for (file in files) {
+            val stream = runCatching { java.io.FileInputStream(file) }.getOrNull() ?: continue
+            synchronized(watchers) { watchers.add(stream) }
+            Thread {
+                val buf = ByteArray(EVENT_SIZE)
+                // Per-slot tracking, so the finger resting on the button can be told apart
+                // from the one doing the dragging.
+                val x = HashMap<Int, Int>()
+                val y = HashMap<Int, Int>()
+                val prevX = HashMap<Int, Int>()
+                val prevY = HashMap<Int, Int>()
+                var slot = 0
+                var accX = 0f
+                var accY = 0f
+                try {
+                    while (leftHeld) {
+                        var read = 0
+                        while (read < EVENT_SIZE) {
+                            val n = stream.read(buf, read, EVENT_SIZE - read)
+                            if (n < 0) return@Thread
+                            read += n
+                        }
+                        val bb = java.nio.ByteBuffer.wrap(buf).order(java.nio.ByteOrder.LITTLE_ENDIAN)
+                        val type = bb.getShort(16).toInt()
+                        val code = bb.getShort(18).toInt() and 0xFFFF
+                        val value = bb.getInt(20)
+
+                        if (type == EV_KEY && code == BTN_TOUCH && value == 0) {
+                            releaseHold()
+                            return@Thread
+                        }
+                        if (type == EV_ABS) {
+                            when (code) {
+                                ABS_MT_SLOT -> slot = value
+                                ABS_MT_TRACKING_ID -> if (value < 0) {
+                                    x.remove(slot); y.remove(slot)
+                                    prevX.remove(slot); prevY.remove(slot)
+                                }
+                                ABS_MT_POSITION_X -> x[slot] = value
+                                ABS_MT_POSITION_Y -> y[slot] = value
+                            }
+                        }
+                        if (type == EV_SYN && code == SYN_REPORT) {
+                            for ((s, cx) in x) {
+                                val cy = y[s] ?: continue
+                                // Fingers on the button hold it; they must not steer.
+                                if (cy >= buttonTopY) { prevX[s] = cx; prevY[s] = cy; continue }
+                                val px = prevX[s]
+                                val py = prevY[s]
+                                prevX[s] = cx
+                                prevY[s] = cy
+                                if (px == null || py == null) continue
+                                accX += (cx - px) * sensitivity
+                                accY += (cy - py) * sensitivity
+                            }
+                            val ix = accX.toInt()
+                            val iy = accY.toInt()
+                            if (ix != 0 || iy != 0) {
+                                accX -= ix
+                                accY -= iy
+                                if (ix != 0) ev(EV_REL, REL_X, ix)
+                                if (iy != 0) ev(EV_REL, REL_Y, iy)
+                                sync()
+                            }
+                        }
+                    }
+                } catch (_: Exception) {
+                }
+            }.apply { isDaemon = true }.start()
+        }
+
+        // Safety net: never leave the button stuck if the panel never reports a lift.
+        Thread {
+            Thread.sleep(30_000)
+            if (leftHeld) {
+                Log.w(TAG, "hold: watchdog release")
+                releaseHold()
+            }
+        }.apply { isDaemon = true }.start()
+    }
+
+    private fun releaseHold() {
+        if (!leftHeld) return
+        leftHeld = false
+        ev(EV_KEY, BTN_LEFT, 0); sync()
+        Log.d(TAG, "hold: BTN_LEFT up")
+        synchronized(watchers) {
+            watchers.forEach { runCatching { it.close() } }
+            watchers.clear()
+        }
+    }
+
     // Closes the uinput file descriptor via JNI (sends UI_DEV_DESTROY internally) and marks
     // the device unavailable so subsequent calls are no-ops rather than crashing.
     override fun destroy() {
@@ -453,5 +570,14 @@ class MouseService : IMouseService.Stub() {
         const val BTN_LEFT = 0x110; const val BTN_RIGHT = 0x111; const val BTN_MIDDLE = 0x112
         const val KEY_BACK = 158; const val KEY_HOME = 102; const val KEY_APPSWITCH = 580
         const val SYN_REPORT = 0
+        const val BTN_TOUCH = 0x14a
+        const val EV_ABS = 3
+        const val ABS_MT_SLOT = 0x2f
+        const val ABS_MT_POSITION_X = 0x35
+        const val ABS_MT_POSITION_Y = 0x36
+        const val ABS_MT_TRACKING_ID = 0x39
+        // struct input_event on a 64-bit kernel: two 8-byte timeval fields, then
+        // __u16 type, __u16 code, __s32 value.
+        const val EVENT_SIZE = 24
     }
 }
