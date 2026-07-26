@@ -214,6 +214,11 @@ class TouchpadViewModel(app: Application) : AndroidViewModel(app) {
     fun performDoubleClick() = mouse.doubleClick(_state.value.cursorX, _state.value.cursorY)
     fun performRightClick() = mouse.rightClick(_state.value.cursorX, _state.value.cursorY)
 
+    // The on-screen left button: held for exactly as long as a finger rests on it, so a
+    // second finger can move the cursor meanwhile — the way a physical touchpad button works.
+    fun leftButtonDown() = mouse.mouseDown()
+    fun leftButtonUp() = mouse.mouseUp()
+
     // Presses BTN_LEFT without releasing; moveCursor calls while held extend a text selection.
     fun startSelectDrag() = mouse.mouseDown()
 

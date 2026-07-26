@@ -22,6 +22,9 @@ import android.view.inputmethod.InputMethodManager
 import android.widget.EditText
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -127,6 +130,11 @@ fun TouchpadScreen(viewModel: TouchpadViewModel) {
                 onTouchModeChanged = viewModel::setTouchMode,
                 onSelectStart = viewModel::startSelectDrag,
                 onSelectEnd = viewModel::endSelectDrag,
+            )
+            LeftMouseButton(
+                enabled = state.mouseReady,
+                onDown = viewModel::leftButtonDown,
+                onUp = viewModel::leftButtonUp,
             )
             if (state.showKeyboard) {
                 KeyboardProxy(
@@ -288,13 +296,9 @@ private fun TouchpadSurface(
                                     downTime = now
                                     didMove = false
                                     lastPositions = pressed.associate { it.id to it.position }
-                                    // Timer fires after LONG_PRESS_MS if finger hasn't moved;
-                                    // haptic confirms entry; subsequent drag transitions into select mode.
-                                    longPressJob = scope.launch {
-                                        delay(LONG_PRESS_MS)
-                                        isLongPress = true
-                                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                                    }
+                                    // No long-press timer: a real touchpad has no such
+                                    // gesture, and here it only got in the way — resting a
+                                    // finger buzzed and then behaved like a stray click.
                                 }
 
                                 when (pressed.size) {
@@ -306,86 +310,26 @@ private fun TouchpadSurface(
                                             val dy = p.position.y - last.y
                                             val moved = abs(dx) > MOVE_THRESHOLD || abs(dy) > MOVE_THRESHOLD
 
-                                            // After long press fired: first movement enters select mode
-                                            // (BTN_LEFT pressed; subsequent moves extend text selection).
-                                            if (isLongPress && !isSelectMode && moved) {
-                                                isSelectMode = true
-                                                didMove = true
-                                                onSelectStart()
-                                                onTouchModeChanged(TouchMode.SELECT)
-                                            }
-                                            // Before long press fires: movement cancels the timer → normal drag.
-                                            // Threshold only gates the tap→drag transition; once dragging,
-                                            // every delta is forwarded so slow movements aren't swallowed.
-                                            if (!didMove && moved && !isLongPress) {
-                                                didMove = true
-                                                longPressJob?.cancel()
-                                            }
-
-                                            if (isSelectMode || didMove) {
+                                            if (!didMove && moved) didMove = true
+                                            if (didMove) {
                                                 onMoveCursor(dx, dy)
-                                                if (!isSelectMode) onTouchModeChanged(TouchMode.CURSOR)
+                                                onTouchModeChanged(TouchMode.CURSOR)
                                             }
                                         }
                                         lastPositions = pressed.associate { it.id to it.position }
                                         p.consume()
                                     }
                                     2 -> {
-                                        // Second finger cancels any in-progress select drag.
-                                        if (isSelectMode) { onSelectEnd(); isSelectMode = false }
-                                        longPressJob?.cancel()
-
-                                        val newPositions = pressed.associate { it.id to it.position }
-                                        if (lastPositions.size == 2) {
-                                            val ids = pressed.map { it.id }
-                                            val p0prev = lastPositions[ids[0]]
-                                            val p1prev = lastPositions[ids[1]]
-                                            val p0curr = newPositions[ids[0]]
-                                            val p1curr = newPositions[ids[1]]
-                                            if (p0prev != null && p1prev != null && p0curr != null && p1curr != null) {
-                                                val dx = ((p0curr.x - p0prev.x) + (p1curr.x - p1prev.x)) / 2f
-                                                val dy = ((p0curr.y - p0prev.y) + (p1curr.y - p1prev.y)) / 2f
-                                                val pdx = p1prev.x - p0prev.x; val pdy = p1prev.y - p0prev.y
-                                                val cdx = p1curr.x - p0curr.x; val cdy = p1curr.y - p0curr.y
-                                                val prevSpan = sqrt(pdx * pdx + pdy * pdy)
-                                                val currSpan = sqrt(cdx * cdx + cdy * cdy)
-                                                val dSpan = currSpan - prevSpan
-                                                // When fingers spread/contract more than they translate, it's a pinch.
-                                                // Otherwise treat as scroll.
-                                                if (abs(dSpan) > abs(dx) + abs(dy)) {
-                                                    if (dSpan != 0f) { onPinch(dSpan); didMove = true }
-                                                } else if (dx != 0f || dy != 0f) {
-                                                    onScroll(dx, dy)
-                                                    onTouchModeChanged(TouchMode.SCROLL)
-                                                    didMove = true
-                                                }
-                                            }
-                                        }
-                                        lastPositions = newPositions
+                                        // Two fingers do nothing here: this surface moves the
+                                        // cursor and nothing else. Clicking belongs to the
+                                        // button below, the way a touchpad's button works.
+                                        lastPositions = pressed.associate { it.id to it.position }
                                         pressed.forEach { it.consume() }
                                     }
                                 }
 
                                 if (justReleased.isNotEmpty() && pressed.isEmpty()) {
-                                    val duration = now - downTime
-                                    longPressJob?.cancel()
                                     onTouchModeChanged(TouchMode.IDLE)
-
-                                    when {
-                                        isSelectMode -> onSelectEnd()
-                                        !didMove && duration >= LONG_PRESS_MS -> onRightClick()
-                                        !didMove && duration < TAP_MAX_MS -> {
-                                            if (now - lastTapTime < DOUBLE_TAP_WINDOW_MS) {
-                                                onDoubleClick()
-                                                lastTapTime = 0L
-                                            } else {
-                                                onClick()
-                                                lastTapTime = now
-                                            }
-                                        }
-                                    }
-                                    isLongPress = false
-                                    isSelectMode = false
                                     lastPositions = emptyMap()
                                     touchPoints = emptyList()
                                 }
@@ -433,6 +377,73 @@ private fun TouchpadSurface(
                 Text("Grant Shizuku permission to activate", color = Color(0xFF37474F), fontSize = 14.sp)
             }
         }
+    }
+}
+
+// The left mouse button, sitting between the touchpad surface and the navigation row.
+// BTN_LEFT is held for exactly as long as a finger rests here, so the other hand can drag
+// windows or their edges — dragging on Android 14 needs a held button, and a touchpad
+// gesture cannot supply one (tap-and-drag only arrives in Android 15).
+@Composable
+private fun LeftMouseButton(
+    enabled: Boolean,
+    onDown: () -> Unit,
+    onUp: () -> Unit,
+) {
+    // The same press tracking the navigation buttons below use, rather than a hand-rolled
+    // pointer loop: the framework owns the press state, so the button lights up and holds
+    // exactly like every other button in the app.
+    val interaction = remember { MutableInteractionSource() }
+    val touching by interaction.collectIsPressedAsState()
+    val haptic = LocalHapticFeedback.current
+
+    // The button latches rather than following the finger, because it cannot follow the
+    // finger: Android revokes this window's touch about 13 ms after BTN_LEFT goes down, so
+    // the app is never told when the finger lifts. Each tap toggles, and the light now
+    // reflects the true state of the mouse button instead of the state of the finger.
+    var held by remember { mutableStateOf(false) }
+
+    LaunchedEffect(touching) {
+        if (touching) {
+            held = !held
+            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+            if (held) onDown() else onUp()
+        }
+    }
+
+    // Never leave the mouse button stuck down if this screen goes away mid-drag.
+    DisposableEffect(Unit) {
+        onDispose { if (held) onUp() }
+    }
+
+    HorizontalDivider(color = Color(0xFF1E2A38), thickness = 1.dp)
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(64.dp)
+            .padding(horizontal = 12.dp, vertical = 6.dp)
+            .clip(RoundedCornerShape(14.dp))
+            .background(
+                when {
+                    !enabled -> SURFACE_DISABLED
+                    held -> ACCENT
+                    else -> SURFACE
+                }
+            )
+            .clickable(
+                interactionSource = interaction,
+                indication = null,
+                enabled = enabled,
+                onClick = {},
+            ),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            if (held) "ЗАЖАТА — нажми, чтобы отпустить" else "левая кнопка",
+            color = if (held) Color(0xFF06202E) else TEXT_DIM,
+            fontSize = 15.sp,
+            fontWeight = if (held) FontWeight.Bold else FontWeight.Normal,
+        )
     }
 }
 
