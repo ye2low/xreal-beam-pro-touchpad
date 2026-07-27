@@ -44,6 +44,7 @@ import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -80,9 +81,11 @@ private const val DOUBLE_TAP_WINDOW_MS = 300L
 // showSettings is true) or the main layout: StatusBar → TouchpadSurface → optional
 // KeyboardProxy → NavigationBar.
 @Composable
+@OptIn(ExperimentalLayoutApi::class)
 fun TouchpadScreen(viewModel: TouchpadViewModel) {
     val state by viewModel.state.collectAsState()
     val context = LocalContext.current
+    val imeVisible = WindowInsets.isImeVisible
 
     Column(
         modifier = Modifier
@@ -159,9 +162,50 @@ fun TouchpadScreen(viewModel: TouchpadViewModel) {
             )
             // No navigation row: the glasses already take system swipes, so on-screen
             // Back/Home/Apps only ate height that the touchpad can use.
+
+            // Clipboard keys, only while the keyboard is up. They sit between the pad and
+            // the keyboard and take their strip from the pad, so the keyboard is not
+            // covered. Typing on the glasses is the one time these are wanted and the one
+            // time the pad can spare the room.
+            if (imeVisible) {
+                ClipboardBar(
+                    onCopy = { viewModel.clipboard(AKeyEvent.KEYCODE_C) },
+                    onCut = { viewModel.clipboard(AKeyEvent.KEYCODE_X) },
+                    onPaste = { viewModel.clipboard(AKeyEvent.KEYCODE_V) },
+                )
+            }
         }
     }
+}
 
+// Copy / Cut / Paste, sent as Ctrl+C/X/V to the focused field on the glasses — the same
+// route the text-selection drag already uses.
+@Composable
+private fun ClipboardBar(onCopy: () -> Unit, onCut: () -> Unit, onPaste: () -> Unit) {
+    // 7 mm of actual glass, worked out from the panel's own dpi rather than assumed, so the
+    // keys are the same size on a phone with a different pixel density.
+    val ydpi = LocalContext.current.resources.displayMetrics.ydpi
+    val height = with(LocalDensity.current) { (7f / 25.4f * ydpi).toDp() }
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 12.dp, vertical = 4.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        listOf("Copy" to onCopy, "Cut" to onCut, "Paste" to onPaste).forEach { (label, action) ->
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .height(height)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(SURFACE)
+                    .clickable(onClick = action),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(label, color = TEXT_DIM, fontSize = 13.sp)
+            }
+        }
+    }
 }
 
 // Top status bar showing the app title, three status dots (Mouse/Display/Nav),
@@ -194,7 +238,12 @@ private fun StatusBar(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text("AR Touchpad", color = TEXT, fontSize = 17.sp, fontWeight = FontWeight.Bold)
+                Text(
+                    androidx.compose.ui.res.stringResource(com.pgratz.artouchpad.R.string.app_name),
+                    color = TEXT,
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.Bold,
+                )
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     StatusDot(mouseReady, "Mouse")
                     StatusDot(targetDisplay != null, "Display")
@@ -236,7 +285,7 @@ private fun StatusBar(
                             contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
                         ) {
                             Text(
-                                if (bootstrapBusy) "запускаю…" else "Запустить Shizuku",
+                                if (bootstrapBusy) "starting…" else "Start Shizuku",
                                 color = Color(0xFFFF7043),
                                 fontSize = 12.sp,
                             )
@@ -287,8 +336,8 @@ private fun StatusBar(
 private fun GlassesScale(current: Int, onChange: (Int) -> Unit) {
     var text by remember(current) { mutableStateOf(if (current > 0) current.toString() else "") }
     val entered = text.toIntOrNull()
-    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        Text("Масштаб на очках", color = TEXT_DIM, fontSize = 14.sp)
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text("Interface scale", color = TEXT_DIM, fontSize = 14.sp)
         Row(
             horizontalArrangement = Arrangement.spacedBy(10.dp),
             verticalAlignment = Alignment.CenterVertically,
@@ -311,20 +360,11 @@ private fun GlassesScale(current: Int, onChange: (Int) -> Unit) {
                 onClick = { entered?.let(onChange) },
                 enabled = entered != null && entered != current,
             ) {
-                Text("Применить", color = if (entered != null) ACCENT else TEXT_MUTED, fontSize = 13.sp)
+                Text("Apply", color = if (entered != null) ACCENT else TEXT_MUTED, fontSize = 13.sp)
             }
         }
-        Text(
-            "213 — оригинал · 180 — мельче · 160 — как DeX · 140 — мелко · 120 — очень мелко",
-            color = TEXT_MUTED,
-            fontSize = 11.sp,
-        )
-        Text(
-            "Меньше число — мельче всё на очках и больше на них помещается. " +
-                "Разрешение не меняется. Ниже 72 система не пускает.",
-            color = TEXT_MUTED,
-            fontSize = 11.sp,
-        )
+        Hint("213 native · 160 like DeX · 120 very small. Lower means smaller and more room; " +
+            "the resolution never changes. Below 72 is refused.")
     }
 }
 
@@ -334,6 +374,25 @@ private fun appVersion(context: android.content.Context): String = runCatching {
     val info = context.packageManager.getPackageInfo(context.packageName, 0)
     "v${info.versionName} (${info.longVersionCode})"
 }.getOrDefault("")
+
+// Section heading, so the list reads as groups rather than one long ladder of switches.
+@Composable
+private fun SectionHeader(title: String) {
+    Text(
+        title.uppercase(),
+        color = ACCENT,
+        fontSize = 11.sp,
+        fontWeight = FontWeight.Bold,
+        modifier = Modifier.padding(top = 6.dp),
+    )
+}
+
+// Hint line. lineHeight is set explicitly: the default leading for 11.sp is generous enough
+// that a two-line hint took as much room as the setting it belonged to.
+@Composable
+private fun Hint(text: String) {
+    Text(text, color = TEXT_MUTED, fontSize = 11.sp, lineHeight = 13.sp)
+}
 
 // A titled switch with an explanatory line under it.
 @Composable
@@ -348,9 +407,9 @@ private fun SettingSwitch(
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Column(modifier = Modifier.weight(1f)) {
+        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(1.dp)) {
             Text(title, color = TEXT_DIM, fontSize = 14.sp)
-            Text(subtitle, color = TEXT_MUTED, fontSize = 11.sp)
+            Hint(subtitle)
         }
         Switch(
             checked = checked,
@@ -785,7 +844,7 @@ private fun SettingsPanel(
             // this everything below the fold was simply unreachable.
             .verticalScroll(rememberScrollState())
             .padding(24.dp),
-        verticalArrangement = Arrangement.spacedBy(20.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -801,107 +860,67 @@ private fun SettingsPanel(
             }
         }
 
-        SettingSlider("Cursor Speed", sensitivity, 0.4f..2.0f, "%.1f×", onSensitivity)
-        SettingSlider("Scroll Speed", scrollSpeed, 0.3f..1.3f, "%.1f×", onScrollSpeed)
+        SectionHeader("Pointer")
+        SettingSlider("Cursor speed", sensitivity, 0.4f..2.0f, "%.1f×", onSensitivity)
 
-        GlassesScale(current = glassesDensity, onChange = onGlassesDensity)
-
+        SectionHeader("Scrolling")
+        SettingSlider("Scroll speed", scrollSpeed, 0.3f..1.3f, "%.1f×", onScrollSpeed)
         SettingSwitch(
-            title = "Force desktop mode",
-            subtitle = "Рабочий стол на очках. Пока включён, система насильно держит " +
-                "клавиатуру на очках, что бы приложение ни просило. Действует с " +
-                "переподключения очков.",
-            checked = desktopMode,
-            onChange = onDesktopMode,
-        )
-
-        SettingSwitch(
-            title = "Enable freeform windows",
-            subtitle = "Окна с шапкой, которые двигаются и меняют размер. Включается " +
-                "отдельно от рабочего стола — при выключенном Force desktop mode " +
-                "оконность сохраняется.",
-            checked = freeformWindows,
-            onChange = onFreeformWindows,
-        )
-
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text("Nebula", color = TEXT_DIM, fontSize = 14.sp)
-                Text(
-                    "Выключенная Nebula не перехватывает очки. Переключается в любой " +
-                        "момент. Проверь, не через неё ли у тебя меняется ultrawide.",
-                    color = TEXT_MUTED,
-                    fontSize = 11.sp,
-                )
-            }
-            Switch(
-                checked = nebulaEnabled,
-                onCheckedChange = onNebulaEnabled,
-                colors = SwitchDefaults.colors(
-                    checkedThumbColor = ACCENT,
-                    checkedTrackColor = ACCENT_DIM,
-                ),
-            )
-        }
-
-        SettingSwitch(
-            title = "Natural Scroll",
-            subtitle = "Content follows finger direction",
+            title = "Natural scroll",
+            subtitle = "Content follows the fingers, as on a phone",
             checked = naturalScroll,
             onChange = onNaturalScroll,
         )
-
         SettingSwitch(
-            title = "Инерция прокрутки",
-            subtitle = "Содержимое едет дальше после отрыва пальцев и замедляется. " +
-                "Касание пада останавливает.",
+            title = "Scroll inertia",
+            subtitle = "Keeps moving after the fingers leave; touch the pad to catch it",
             checked = scrollInertia,
             onChange = onScrollInertia,
         )
-
         if (scrollInertia) {
-            SettingSlider(
-                "Затухание инерции", inertiaSeconds, 0.3f..4.0f, "%.1f с", onInertiaSeconds,
-            )
+            SettingSlider("Coast time", inertiaSeconds, 0.3f..4.0f, "%.1f s", onInertiaSeconds)
         }
 
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Column {
-                Text("Keyboard on Phone", color = TEXT_DIM, fontSize = 14.sp)
-                Text(
-                    when {
-                        dexKeyboard && dexKeyboardActive ->
-                            "Glasses text fields open the phone keyboard (DeX style)"
-                        dexKeyboard && targetDisplay != null ->
-                            "Not supported on this device — using proxy keyboard"
-                        else ->
-                            "Off: keyboard opens on the glasses; use ⌨ for the proxy"
-                    },
-                    color = TEXT_MUTED, fontSize = 11.sp,
-                )
-            }
-            Switch(
-                checked = dexKeyboard,
-                onCheckedChange = onDexKeyboard,
-                colors = SwitchDefaults.colors(
-                    checkedThumbColor = ACCENT,
-                    checkedTrackColor = ACCENT_DIM,
-                    uncheckedThumbColor = TEXT_DIM,
-                    uncheckedTrackColor = Color(0xFF263545),
-                ),
-            )
-        }
+        SectionHeader("Glasses")
+        GlassesScale(current = glassesDensity, onChange = onGlassesDensity)
+        SettingSwitch(
+            title = "Force desktop mode",
+            subtitle = "Desktop on the glasses. While on, the system keeps the keyboard " +
+                "there whatever an app asks for. Applies on reconnect.",
+            checked = desktopMode,
+            onChange = onDesktopMode,
+        )
+        SettingSwitch(
+            title = "Freeform windows",
+            subtitle = "Title bars, moving and resizing. Survives desktop mode being off.",
+            checked = freeformWindows,
+            onChange = onFreeformWindows,
+        )
+        SettingSwitch(
+            title = "Nebula",
+            subtitle = "Off, it stops seizing the glasses. Check it is not what switches " +
+                "your display modes.",
+            checked = nebulaEnabled,
+            onChange = onNebulaEnabled,
+        )
 
-        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Text("Displays", color = TEXT_MUTED, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+        SectionHeader("Keyboard")
+        SettingSwitch(
+            title = "Keyboard on phone",
+            subtitle = when {
+                dexKeyboard && dexKeyboardActive ->
+                    "Glasses text fields open the phone keyboard, DeX style"
+                dexKeyboard ->
+                    "Requested, but overridden — turn Force desktop mode off"
+                else ->
+                    "Off: the keyboard opens on the glasses"
+            },
+            checked = dexKeyboard,
+            onChange = onDexKeyboard,
+        )
+
+        SectionHeader("Displays")
+        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
             if (allDisplays.isEmpty()) {
                 Text("No displays detected", color = Color(0xFFFF7043), fontSize = 12.sp)
             } else {
@@ -922,10 +941,8 @@ private fun SettingsPanel(
             }
         }
 
-        Spacer(modifier = Modifier.weight(1f))
-
-        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Text("Gesture Guide", color = TEXT_MUTED, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+        SectionHeader("Gestures")
+        Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
             GestureHint("1 finger drag", "Move cursor")
             GestureHint("1 finger tap", "Left click")
             GestureHint("1 finger double-tap", "Double click")

@@ -481,6 +481,10 @@ class TouchpadViewModel(app: Application) : AndroidViewModel(app) {
         flingJob = null
     }
 
+    // Copy / Cut / Paste for the field on the glasses, sent as Ctrl+key so they land in the
+    // focused field rather than doing anything to the phone.
+    fun clipboard(keycode: Int) = mouse.pressKeyWithCtrl(keycode)
+
     // Forwards an Android keycode to MouseService for injection on the glasses display.
     fun pressKey(linuxKeyCode: Int) = mouse.pressKey(linuxKeyCode)
     // Converts text to key events and injects them to the focused window on the glasses display.
