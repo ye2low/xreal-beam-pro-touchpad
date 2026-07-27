@@ -117,6 +117,20 @@ interface IMouseService {
     // and the key stopped repeating. Passing 0 and 1 watches the whole panel again.
     void setPanelBounds(float topFraction, float bottomFraction) = 21;
 
+    // Scrolls by injecting a scroll event straight at the focused window, with a fractional
+    // amount, instead of turning the movement into whole mouse-wheel detents. Detents are all
+    // a uinput wheel can express: the high-resolution wheel axis Linux offers is only read by
+    // Android from 16 onwards, and this device is on 14.
+    void scrollFine(float vScroll, float hScroll) = 22;
+
+    // A real two-finger pinch on the glasses, as a synthetic touch stream centred on the
+    // cursor. Ctrl+wheel — the other way to zoom — cannot be smooth: Chrome snaps it to a
+    // fixed ladder of zoom factors and advances exactly one step per event, however small
+    // the amount. A genuine pinch is continuous, and works in any app that handles one.
+    void pinchBegin() = 23;
+    void pinchUpdate(float spanDelta) = 24;
+    void pinchEnd() = 25;
+
     // Closes the uinput file descriptor and marks the device not ready.
     void destroy() = 16777114;
 }

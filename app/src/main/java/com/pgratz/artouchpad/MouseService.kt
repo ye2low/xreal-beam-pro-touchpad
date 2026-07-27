@@ -490,6 +490,108 @@ class MouseService : IMouseService.Stub() {
         }
     }
 
+    // Scrolls without going through the wheel. A uinput wheel can only express whole detents,
+    // so scrolling built from it arrives in steps however finely the fingers move; the
+    // high-resolution wheel axis that would fix it is only read by Android from 16 onwards.
+    // Injecting the scroll event directly sidesteps the wheel: the amount is a float all the
+    // way to the app, and every app already reads this axis.
+    override fun scrollFine(vScroll: Float, hScroll: Float) {
+        val instance = imgInstance ?: return
+        val inject = imgInjectEvent ?: return
+        val setDisp = setDisplayIdMethod ?: return
+        try {
+            val t = SystemClock.uptimeMillis()
+            val props = arrayOf(MotionEvent.PointerProperties().apply {
+                id = 0; toolType = MotionEvent.TOOL_TYPE_MOUSE
+            })
+            val coords = arrayOf(MotionEvent.PointerCoords().apply {
+                x = cursorX; y = cursorY; pressure = 0f; size = 0f
+                setAxisValue(MotionEvent.AXIS_VSCROLL, vScroll)
+                setAxisValue(MotionEvent.AXIS_HSCROLL, hScroll)
+            })
+            val event = MotionEvent.obtain(
+                t, t, MotionEvent.ACTION_SCROLL,
+                1, props, coords,
+                0, 0, 1f, 1f, -1, 0, InputDevice.SOURCE_MOUSE, 0
+            )
+            setDisp.invoke(event, displayId)
+            inject.invoke(instance, event, 0)
+            event.recycle()
+        } catch (e: Exception) {
+            Log.e(TAG, "scrollFine failed: $e")
+        }
+    }
+
+    // A synthetic two-finger pinch centred on the cursor. The two contacts sit either side of
+    // it and move apart or together as the fingers on the pad do, which is what makes the
+    // zoom continuous — Android's gesture detector works on geometry alone and has no way to
+    // tell this from a hand on a touchscreen.
+    private var pinchDownTime = 0L
+    private var pinchHalfSpan = 0f
+    private var pinching = false
+
+    override fun pinchBegin() {
+        if (pinching) return
+        pinchDownTime = SystemClock.uptimeMillis()
+        pinchHalfSpan = PINCH_START_SPAN
+        pinching = true
+        injectPinch(MotionEvent.ACTION_DOWN, 1)
+        injectPinch(
+            MotionEvent.ACTION_POINTER_DOWN or (1 shl MotionEvent.ACTION_POINTER_INDEX_SHIFT), 2
+        )
+    }
+
+    override fun pinchUpdate(spanDelta: Float) {
+        if (!pinching) return
+        // Half, because the span is shared between the two contacts.
+        pinchHalfSpan = (pinchHalfSpan + spanDelta / 2f)
+            .coerceIn(PINCH_MIN_SPAN, maxOf(PINCH_MIN_SPAN + 1f, displayWidth / 2f - 8f))
+        injectPinch(MotionEvent.ACTION_MOVE, 2)
+    }
+
+    override fun pinchEnd() {
+        if (!pinching) return
+        injectPinch(
+            MotionEvent.ACTION_POINTER_UP or (1 shl MotionEvent.ACTION_POINTER_INDEX_SHIFT), 2
+        )
+        injectPinch(MotionEvent.ACTION_UP, 1)
+        pinching = false
+    }
+
+    // downTime stays fixed for the whole gesture and eventTime advances, which is what makes
+    // the stream a gesture rather than a series of unrelated taps.
+    private fun injectPinch(action: Int, pointerCount: Int) {
+        val instance = imgInstance ?: return
+        val inject = imgInjectEvent ?: return
+        val setDisp = setDisplayIdMethod ?: return
+        try {
+            val props = Array(pointerCount) { i ->
+                MotionEvent.PointerProperties().apply {
+                    id = i; toolType = MotionEvent.TOOL_TYPE_FINGER
+                }
+            }
+            val coords = Array(pointerCount) { i ->
+                MotionEvent.PointerCoords().apply {
+                    val offset = if (i == 0) -pinchHalfSpan else pinchHalfSpan
+                    x = (cursorX + offset).coerceIn(0f, displayWidth - 1f)
+                    y = cursorY.coerceIn(0f, displayHeight - 1f)
+                    pressure = 1f
+                    size = 1f
+                }
+            }
+            val event = MotionEvent.obtain(
+                pinchDownTime, SystemClock.uptimeMillis(), action,
+                pointerCount, props, coords,
+                0, 0, 1f, 1f, 0, 0, InputDevice.SOURCE_TOUCHSCREEN, 0
+            )
+            setDisp.invoke(event, displayId)
+            inject.invoke(instance, event, 0)
+            event.recycle()
+        } catch (e: Exception) {
+            Log.e(TAG, "pinch inject failed: $e")
+        }
+    }
+
     // Presses BTN_LEFT without releasing — the paired mouseUp() call ends the drag.
     // Used for text selection: button held while moveMouse moves the cursor.
     override fun mouseDown() {
@@ -728,6 +830,9 @@ class MouseService : IMouseService.Stub() {
     companion object {
         private const val TAG = "MouseService"
         private const val NEBULA_PACKAGE = "com.xreal.evapro.nebula"
+        // Where the two synthetic contacts start, and how close together they may get.
+        private const val PINCH_START_SPAN = 140f
+        private const val PINCH_MIN_SPAN = 24f
         private val WINDOWING_FLAGS = setOf(
             "force_desktop_mode_on_external_displays",
             "enable_freeform_support",

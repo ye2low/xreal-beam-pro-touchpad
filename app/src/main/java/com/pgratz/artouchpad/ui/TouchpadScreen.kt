@@ -133,6 +133,10 @@ fun TouchpadScreen(viewModel: TouchpadViewModel) {
                 onNaturalScroll = viewModel::setNaturalScroll,
                 scrollInertia = state.scrollInertia,
                 onScrollInertia = viewModel::setScrollInertia,
+                smoothScroll = state.smoothScroll,
+                onSmoothScroll = viewModel::setSmoothScroll,
+                smoothZoom = state.smoothZoom,
+                onSmoothZoom = viewModel::setSmoothZoom,
                 inertiaSeconds = state.inertiaSeconds,
                 onInertiaSeconds = viewModel::setInertiaSeconds,
                 onDexKeyboard = viewModel::setDexKeyboard,
@@ -824,6 +828,10 @@ private fun SettingsPanel(
     onNaturalScroll: (Boolean) -> Unit,
     scrollInertia: Boolean,
     onScrollInertia: (Boolean) -> Unit,
+    smoothScroll: Boolean,
+    onSmoothScroll: (Boolean) -> Unit,
+    smoothZoom: Boolean,
+    onSmoothZoom: (Boolean) -> Unit,
     inertiaSeconds: Float,
     onInertiaSeconds: (Float) -> Unit,
     onDexKeyboard: (Boolean) -> Unit,
@@ -870,6 +878,20 @@ private fun SettingsPanel(
             subtitle = "Content follows the fingers, as on a phone",
             checked = naturalScroll,
             onChange = onNaturalScroll,
+        )
+        SettingSwitch(
+            title = "Smooth scrolling",
+            subtitle = "Fractional scrolling, injected past the mouse wheel. The wheel can " +
+                "only step; this does not.",
+            checked = smoothScroll,
+            onChange = onSmoothScroll,
+        )
+        SettingSwitch(
+            title = "Smooth zoom",
+            subtitle = "Pinch as a real two-finger gesture on the glasses. Off, zoom goes " +
+                "through Ctrl+wheel, which Chrome snaps to fixed steps.",
+            checked = smoothZoom,
+            onChange = onSmoothZoom,
         )
         SettingSwitch(
             title = "Scroll inertia",

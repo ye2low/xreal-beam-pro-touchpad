@@ -56,6 +56,9 @@ private const val FLING_MIN_VELOCITY = 0.8f
 private const val FLING_FRAME_MS = 16f
 private const val FLING_NOMINAL_VELOCITY = 20f
 
+// Finger travel worth one wheel detent, used to turn pixels into fractional scroll units.
+private const val PIXELS_PER_DETENT = 60f
+
 private const val KEY_DESKTOP_MODE = "force_desktop_mode_on_external_displays"
 private const val KEY_FREEFORM = "enable_freeform_support"
 
@@ -90,6 +93,10 @@ data class TouchpadState(
     val scrollInertia: Boolean = false,
     // Roughly how long that coast lasts, in seconds, for a firm flick.
     val inertiaSeconds: Float = 0.8f,
+    // Scroll past the mouse wheel, in fractions of a detent, so movement is continuous.
+    val smoothScroll: Boolean = false,
+    // Zoom with a real two-finger pinch on the glasses instead of Ctrl+wheel steps.
+    val smoothZoom: Boolean = false,
     val showSettings: Boolean = false,
     val touchMode: TouchMode = TouchMode.IDLE,
     val showKeyboard: Boolean = false,
@@ -130,6 +137,8 @@ class TouchpadViewModel(app: Application) : AndroidViewModel(app) {
         naturalScroll = prefs.getBoolean("natural_scroll", false),
         scrollInertia = prefs.getBoolean("scroll_inertia", false),
         inertiaSeconds = prefs.getFloat("inertia_seconds", 0.8f),
+        smoothScroll = prefs.getBoolean("smooth_scroll", false),
+        smoothZoom = prefs.getBoolean("smooth_zoom", false),
         dexKeyboardEnabled = prefs.getBoolean("dex_keyboard", true),
         glassesDensity = prefs.getInt("glasses_density", 0),
     ))
@@ -337,6 +346,7 @@ class TouchpadViewModel(app: Application) : AndroidViewModel(app) {
     fun setTouchMode(mode: TouchMode) {
         if (mode == TouchMode.IDLE) {
             smoothDx = 0f; smoothDy = 0f
+            endPinch()
             startFling()
             lastGestureWasScroll = false
             flingVx = 0f; flingVy = 0f
@@ -417,7 +427,13 @@ class TouchpadViewModel(app: Application) : AndroidViewModel(app) {
     private fun emitScroll(dx: Float, dy: Float) {
         val speed = _state.value.scrollSpeed
         val dir = if (_state.value.naturalScroll) 1f else -1f
-        mouse.scroll(dx * speed * dir, dy * speed * dir)
+        if (_state.value.smoothScroll) {
+            // A detent is worth about this many pixels of finger travel; sending the
+            // fraction rather than rounding it is the whole point.
+            mouse.scrollFine(dy * speed * dir / PIXELS_PER_DETENT, dx * speed * dir / PIXELS_PER_DETENT)
+        } else {
+            mouse.scroll(dx * speed * dir, dy * speed * dir)
+        }
     }
 
     // Keeps the content moving after the fingers leave, slowing to a stop — the way a phone
@@ -494,12 +510,27 @@ class TouchpadViewModel(app: Application) : AndroidViewModel(app) {
     // Accumulates until 200 px threshold to avoid jitter; each 200 px = 1 AXIS_VSCROLL detent,
     // which Chrome/WebView maps to one zoom step (~10%) without affecting the system font scale.
     fun pinchZoom(dDist: Float) {
+        if (_state.value.smoothZoom) {
+            // A real pinch on the glasses. Ctrl+wheel cannot be made smooth: Chrome snaps it
+            // to a fixed ladder of zoom factors, one step per event, whatever the amount.
+            if (!pinchActive) { pinchActive = true; mouse.pinchBegin() }
+            mouse.pinchUpdate(dDist)
+            return
+        }
         pinchAccum += dDist
         val detents = (pinchAccum / 200f).toInt()
         if (detents != 0) {
             pinchAccum -= detents * 200f
             mouse.ctrlScroll(detents.toFloat())
         }
+    }
+
+    private var pinchActive = false
+
+    private fun endPinch() {
+        if (!pinchActive) return
+        pinchActive = false
+        mouse.pinchEnd()
     }
     // Toggles showKeyboard in state, which shows or hides the KeyboardProxy strip in the UI.
     fun toggleKeyboard() = _state.update { it.copy(showKeyboard = !it.showKeyboard) }
@@ -539,6 +570,15 @@ class TouchpadViewModel(app: Application) : AndroidViewModel(app) {
         prefs.edit().putBoolean("scroll_inertia", v).apply()
         if (!v) stopFling()
         _state.update { it.copy(scrollInertia = v) }
+    }
+    fun setSmoothScroll(v: Boolean) {
+        prefs.edit().putBoolean("smooth_scroll", v).apply()
+        _state.update { it.copy(smoothScroll = v) }
+    }
+    fun setSmoothZoom(v: Boolean) {
+        prefs.edit().putBoolean("smooth_zoom", v).apply()
+        if (!v) endPinch()
+        _state.update { it.copy(smoothZoom = v) }
     }
     fun setInertiaSeconds(v: Float) {
         prefs.edit().putFloat("inertia_seconds", v).apply()

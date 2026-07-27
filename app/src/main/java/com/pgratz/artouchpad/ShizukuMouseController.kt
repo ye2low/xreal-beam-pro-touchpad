@@ -37,7 +37,7 @@ class ShizukuMouseController {
     )
         .processNameSuffix("mouse")
         .daemon(false)
-        .version(21)  // bumped — setPanelBounds
+        .version(22)  // bumped — scrollFine and the pinch stream
 
     private val connection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
@@ -193,6 +193,16 @@ class ShizukuMouseController {
     // Turns XREAL's Nebula on or off, reversibly.
     fun setNebulaEnabled(enabled: Boolean): Boolean =
         runCatching { service?.setNebulaEnabled(enabled) ?: false }.getOrDefault(false)
+
+    // Fractional scrolling, injected past the wheel — see IMouseService for why.
+    fun scrollFine(vScroll: Float, hScroll: Float) {
+        runCatching { service?.scrollFine(vScroll, hScroll) }
+    }
+
+    // A real two-finger pinch on the glasses, so zooming is continuous.
+    fun pinchBegin() { runCatching { service?.pinchBegin() } }
+    fun pinchUpdate(spanDelta: Float) { runCatching { service?.pinchUpdate(spanDelta) } }
+    fun pinchEnd() { runCatching { service?.pinchEnd() } }
 
     // The band of the screen the touch surface occupies; the hold ignores anything outside it.
     fun setPanelBounds(topFraction: Float, bottomFraction: Float) {
