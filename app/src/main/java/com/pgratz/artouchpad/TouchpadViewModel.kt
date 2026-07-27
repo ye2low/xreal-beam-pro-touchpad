@@ -29,6 +29,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlin.math.abs
+import kotlin.math.exp
+import kotlin.math.ln
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -46,11 +48,13 @@ private const val HOLD_SLOP_PX = 25
 
 private const val NEBULA_PACKAGE = "com.xreal.evapro.nebula"
 
-// Fling: how much of each new frame's delta feeds the running average, how fast the replayed
-// velocity dies away per frame, and the speed below which it is not worth continuing.
+// Fling: how much of each new frame's delta feeds the running average, the speed below which
+// it is not worth continuing, the frame interval, and the flick speed the requested duration
+// is defined against — a firm flick, so the setting means what it says for a normal gesture.
 private const val FLING_SMOOTHING = 0.4f
-private const val FLING_DECAY = 0.94f
 private const val FLING_MIN_VELOCITY = 0.8f
+private const val FLING_FRAME_MS = 16f
+private const val FLING_NOMINAL_VELOCITY = 20f
 
 private const val KEY_DESKTOP_MODE = "force_desktop_mode_on_external_displays"
 private const val KEY_FREEFORM = "enable_freeform_support"
@@ -84,6 +88,8 @@ data class TouchpadState(
     val naturalScroll: Boolean = false,
     // Keeps the content moving after the fingers leave, slowing to a stop.
     val scrollInertia: Boolean = false,
+    // Roughly how long that coast lasts, in seconds, for a firm flick.
+    val inertiaSeconds: Float = 0.8f,
     val showSettings: Boolean = false,
     val touchMode: TouchMode = TouchMode.IDLE,
     val showKeyboard: Boolean = false,
@@ -123,6 +129,7 @@ class TouchpadViewModel(app: Application) : AndroidViewModel(app) {
         scrollSpeed = prefs.getFloat("scroll_speed", 0.8f),
         naturalScroll = prefs.getBoolean("natural_scroll", false),
         scrollInertia = prefs.getBoolean("scroll_inertia", false),
+        inertiaSeconds = prefs.getFloat("inertia_seconds", 0.8f),
         dexKeyboardEnabled = prefs.getBoolean("dex_keyboard", true),
         glassesDensity = prefs.getInt("glasses_density", 0),
     ))
@@ -425,12 +432,17 @@ class TouchpadViewModel(app: Application) : AndroidViewModel(app) {
         var vx = flingVx
         var vy = flingVy
         if (abs(vx) + abs(vy) < FLING_MIN_VELOCITY) return
+        // Per-frame decay chosen so that a firm flick takes about the requested number of
+        // seconds to die out: a nominal starting speed has to fall to the cut-off over
+        // seconds/frame steps, which fixes the ratio exactly.
+        val frames = (_state.value.inertiaSeconds * 1000f / FLING_FRAME_MS).coerceAtLeast(1f)
+        val decay = exp(ln(FLING_MIN_VELOCITY / FLING_NOMINAL_VELOCITY) / frames)
         flingJob = viewModelScope.launch {
             while (abs(vx) + abs(vy) >= FLING_MIN_VELOCITY) {
                 emitScroll(vx, vy)
-                vx *= FLING_DECAY
-                vy *= FLING_DECAY
-                delay(16)
+                vx *= decay
+                vy *= decay
+                delay(FLING_FRAME_MS.toLong())
             }
         }
     }
@@ -495,6 +507,10 @@ class TouchpadViewModel(app: Application) : AndroidViewModel(app) {
         prefs.edit().putBoolean("scroll_inertia", v).apply()
         if (!v) stopFling()
         _state.update { it.copy(scrollInertia = v) }
+    }
+    fun setInertiaSeconds(v: Float) {
+        prefs.edit().putFloat("inertia_seconds", v).apply()
+        _state.update { it.copy(inertiaSeconds = v) }
     }
     fun setDexKeyboard(v: Boolean) {
         prefs.edit().putBoolean("dex_keyboard", v).apply()

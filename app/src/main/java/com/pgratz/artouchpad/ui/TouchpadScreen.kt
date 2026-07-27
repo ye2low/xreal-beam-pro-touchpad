@@ -130,6 +130,8 @@ fun TouchpadScreen(viewModel: TouchpadViewModel) {
                 onNaturalScroll = viewModel::setNaturalScroll,
                 scrollInertia = state.scrollInertia,
                 onScrollInertia = viewModel::setScrollInertia,
+                inertiaSeconds = state.inertiaSeconds,
+                onInertiaSeconds = viewModel::setInertiaSeconds,
                 onDexKeyboard = viewModel::setDexKeyboard,
                 // What the display actually reports, not what was last saved.
                 glassesDensity = state.targetDisplay?.density ?: 0,
@@ -753,6 +755,8 @@ private fun SettingsPanel(
     onNaturalScroll: (Boolean) -> Unit,
     scrollInertia: Boolean,
     onScrollInertia: (Boolean) -> Unit,
+    inertiaSeconds: Float,
+    onInertiaSeconds: (Float) -> Unit,
     onDexKeyboard: (Boolean) -> Unit,
     glassesDensity: Int,
     onGlassesDensity: (Int) -> Unit,
@@ -848,6 +852,12 @@ private fun SettingsPanel(
             checked = scrollInertia,
             onChange = onScrollInertia,
         )
+
+        if (scrollInertia) {
+            SettingSlider(
+                "Затухание инерции", inertiaSeconds, 0.3f..4.0f, "%.1f с", onInertiaSeconds,
+            )
+        }
 
         Row(
             modifier = Modifier.fillMaxWidth(),
