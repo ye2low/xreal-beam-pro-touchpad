@@ -337,6 +337,37 @@ class MouseService : IMouseService.Stub() {
         }
     }
 
+    // Opens the phone's task switcher, so leftover tasks can be swiped away by hand.
+    // `-d 0` is deliberate: every other injection here aims at the glasses, but the tasks
+    // that blank the home screen sit on the phone, and that is where recents has to appear.
+    override fun showRecents() {
+        try {
+            Runtime.getRuntime().exec(
+                arrayOf("input", "-d", "0", "keyevent", "187")  // KEYCODE_APP_SWITCH
+            ).waitFor()
+        } catch (e: Exception) {
+            Log.e(TAG, "showRecents failed: $e")
+        }
+    }
+
+    // Input: displayId and a density in dpi, or 0 to drop the override.
+    // Freeform window captions are a fixed 42dp in the framework, so their thickness follows
+    // the display's density and nothing else. The override is stored against the display's
+    // unique id, so it survives reboots and re-plugging the glasses.
+    override fun setDisplayDensity(displayId: Int, density: Int): Boolean = try {
+        val args = if (density <= 0) {
+            arrayOf("wm", "density", "reset", "-d", displayId.toString())
+        } else {
+            arrayOf("wm", "density", density.toString(), "-d", displayId.toString())
+        }
+        val exit = Runtime.getRuntime().exec(args).waitFor()
+        Log.d(TAG, "setDisplayDensity($displayId, $density) exit=$exit")
+        exit == 0
+    } catch (e: Exception) {
+        Log.e(TAG, "setDisplayDensity failed: $e")
+        false
+    }
+
     // Input: displayId and IME policy (0 = local, 1 = fallback, 2 = hide).
     // Calls IWindowManager.setDisplayImePolicy via reflection (there is no `wm` shell
     // subcommand for this). With policy 1 (fallback), a field focused on the target display

@@ -72,6 +72,9 @@ data class TouchpadState(
     // (false when `wm set-display-ime-policy` is unsupported on this build).
     val dexKeyboardEnabled: Boolean = true,
     val dexKeyboardActive: Boolean = false,
+    // Density override applied to the glasses, in dpi; 0 means the panel's own value.
+    // It is the only lever on the thickness of window title bars.
+    val glassesDensity: Int = 0,
 ) {
     val externalDisplayConnected get() = targetDisplay != null
     val displayWidth get() = targetDisplay?.width ?: 1920
@@ -87,6 +90,7 @@ class TouchpadViewModel(app: Application) : AndroidViewModel(app) {
         scrollSpeed = prefs.getFloat("scroll_speed", 0.8f),
         naturalScroll = prefs.getBoolean("natural_scroll", false),
         dexKeyboardEnabled = prefs.getBoolean("dex_keyboard", true),
+        glassesDensity = prefs.getInt("glasses_density", 0),
     ))
     val state: StateFlow<TouchpadState> = _state.asStateFlow()
 
@@ -379,6 +383,20 @@ class TouchpadViewModel(app: Application) : AndroidViewModel(app) {
         _state.update { it.copy(dexKeyboardEnabled = v) }
         _state.value.targetDisplay?.let { applyImePolicy(it.id) }
     }
+    // Opens the phone's task switcher. Tasks left behind on the phone blank its home screen,
+    // and this is how they get swiped away.
+    fun showRecents() = mouse.showRecents()
+
+    // Density of the glasses display, in dpi; 0 restores the panel's own value. Window title
+    // bars are a fixed 42dp in the framework, so this is what makes them thinner — at 160
+    // dpi (what Samsung uses for DeX) a caption is 42 px instead of 56.
+    fun setGlassesDensity(density: Int) {
+        prefs.edit().putInt("glasses_density", density).apply()
+        _state.update { it.copy(glassesDensity = density) }
+        val display = _state.value.targetDisplay ?: return
+        viewModelScope.launch(Dispatchers.IO) { mouse.setDisplayDensity(display.id, density) }
+    }
+
     fun toggleSettings() = _state.update { it.copy(showSettings = !it.showSettings) }
 
     // Cleans up the accessibility callback, display listener, and mouse service when the

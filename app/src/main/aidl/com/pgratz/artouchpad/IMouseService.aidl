@@ -82,6 +82,19 @@ interface IMouseService {
     // True while the hold above is still in effect, so the button can stay lit.
     boolean isLeftHeld() = 14;
 
+    // Opens the phone's task switcher. Deliberately aimed at the phone rather than the
+    // configured display: it exists so leftover tasks sitting on the phone can be swiped
+    // away by hand. Those tasks are what blanks the home screen — a window that has moved
+    // to the glasses can leave its task behind, invisible but still composited with an
+    // empty buffer, and the compositor then fills the whole phone screen with flat colour.
+    void showRecents() = 17;
+
+    // Overrides the density of one display via `wm density <n> -d <id>`, or restores the
+    // panel's own value when density is 0. This is the only thing that changes the
+    // thickness of freeform window captions: their height is a fixed 42dp in the framework,
+    // so it scales with display density and with nothing else.
+    boolean setDisplayDensity(int displayId, int density) = 18;
+
     // Closes the uinput file descriptor and marks the device not ready.
     void destroy() = 16777114;
 }

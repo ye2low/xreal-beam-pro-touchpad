@@ -99,6 +99,7 @@ fun TouchpadScreen(viewModel: TouchpadViewModel) {
             bootstrapBusy = state.bootstrapBusy,
             bootstrapStatus = state.bootstrapStatus,
             onBack = { viewModel.pressKey(AKeyEvent.KEYCODE_BACK) },
+            onRecents = viewModel::showRecents,
             onSettingsClick = viewModel::toggleSettings,
             onStartShizuku = viewModel::startShizuku,
             onGrantShizuku = viewModel::requestShizukuPermission,
@@ -124,6 +125,8 @@ fun TouchpadScreen(viewModel: TouchpadViewModel) {
                 onScrollSpeed = viewModel::setScrollSpeed,
                 onNaturalScroll = viewModel::setNaturalScroll,
                 onDexKeyboard = viewModel::setDexKeyboard,
+                glassesDensity = state.glassesDensity,
+                onGlassesDensity = viewModel::setGlassesDensity,
                 onDismiss = viewModel::toggleSettings,
             )
         } else {
@@ -159,6 +162,7 @@ private fun StatusBar(
     bootstrapBusy: Boolean,
     bootstrapStatus: String?,
     onBack: () -> Unit,
+    onRecents: () -> Unit,
     onSettingsClick: () -> Unit,
     onStartShizuku: () -> Unit,
     onGrantShizuku: () -> Unit,
@@ -192,8 +196,16 @@ private fun StatusBar(
             // phone drives whatever is on the phone's own screen; this Back is injected at
             // the display the cursor lives on, so it goes back inside the app being worked
             // on in the glasses. Home and recents there are reachable by other means.
-            IconButton(onClick = onBack, modifier = Modifier.size(44.dp)) {
-                Text("◀", color = NAV_ICON, fontSize = 20.sp)
+            Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+                IconButton(onClick = onBack, modifier = Modifier.size(44.dp)) {
+                    Text("◀", color = NAV_ICON, fontSize = 20.sp)
+                }
+                // The phone's own task switcher. A window that moves to the glasses can
+                // leave its task behind on the phone, where it keeps covering the home
+                // screen with a blank frame; this is how those get swiped away.
+                IconButton(onClick = onRecents, modifier = Modifier.size(44.dp)) {
+                    Text("▢", color = NAV_ICON, fontSize = 20.sp)
+                }
             }
 
             Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -245,6 +257,34 @@ private fun StatusBar(
     }
 }
 
+
+// Interface scale on the glasses. This is a display density override, and density is the
+// only thing window title bars respond to — their height is a fixed 42dp in the framework,
+// so at 160 dpi a caption is 42 px where at the panel's own 213 it is 56. Lowering it
+// shrinks everything on the glasses by the same ratio and leaves the phone untouched.
+@Composable
+private fun GlassesScale(current: Int, onChange: (Int) -> Unit) {
+    // 160 is what Samsung uses for DeX; 0 means "leave the panel's own value alone".
+    val options = listOf(0 to "как есть", 180 to "мельче", 160 to "как DeX", 140 to "мелко")
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text("Масштаб на очках", color = TEXT_DIM, fontSize = 14.sp)
+        Text("Тоньше шапки окон, больше рабочего поля", color = TEXT_MUTED, fontSize = 11.sp)
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            options.forEach { (density, label) ->
+                val selected = density == current
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(if (selected) ACCENT_DIM else SURFACE)
+                        .clickable { onChange(density) }
+                        .padding(horizontal = 12.dp, vertical = 8.dp)
+                ) {
+                    Text(label, color = if (selected) ACCENT else TEXT_DIM, fontSize = 12.sp)
+                }
+            }
+        }
+    }
+}
 
 // Small colored circle (green = active, gray = inactive) followed by a text label.
 // Used in StatusBar to show Mouse/Display/Nav readiness at a glance.
@@ -638,6 +678,8 @@ private fun SettingsPanel(
     onScrollSpeed: (Float) -> Unit,
     onNaturalScroll: (Boolean) -> Unit,
     onDexKeyboard: (Boolean) -> Unit,
+    glassesDensity: Int,
+    onGlassesDensity: (Int) -> Unit,
     onDismiss: () -> Unit,
 ) {
     Column(
@@ -659,6 +701,8 @@ private fun SettingsPanel(
 
         SettingSlider("Cursor Speed", sensitivity, 0.4f..2.0f, "%.1f×", onSensitivity)
         SettingSlider("Scroll Speed", scrollSpeed, 0.3f..1.3f, "%.1f×", onScrollSpeed)
+
+        GlassesScale(current = glassesDensity, onChange = onGlassesDensity)
 
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -741,8 +785,10 @@ private fun SettingsPanel(
             GestureHint("1 finger drag", "Move cursor")
             GestureHint("1 finger tap", "Left click")
             GestureHint("1 finger double-tap", "Double click")
-            GestureHint("1 finger long-press", "Right click")
-            GestureHint("1 finger long-press + drag", "Select text")
+            // Holding is how the left button is held down, which is what drags windows and
+            // resizes them; the old right-click and text-select gestures are gone.
+            GestureHint("1 finger hold", "Hold left button")
+            GestureHint("1 finger hold + drag", "Drag window / resize")
             GestureHint("2 finger drag", "Scroll")
             GestureHint("2 finger pinch", "Zoom page")
         }

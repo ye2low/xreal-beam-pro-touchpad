@@ -68,6 +68,19 @@
                 android:resource="@xml/accessibility_service_config" />
         </service>
 
+        <!-- Quick-settings tile. The way back into the app when the home screen has gone
+             blank and the notification shade is all that still responds. -->
+        <service
+            android:name=".TouchpadTileService"
+            android:exported="true"
+            android:icon="@mipmap/ic_launcher"
+            android:label="@string/app_name"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+        </service>
+
         <!-- Collects the pairing code via a notification reply; see AdbPairingService. -->
         <service
             android:name=".adb.AdbPairingService"

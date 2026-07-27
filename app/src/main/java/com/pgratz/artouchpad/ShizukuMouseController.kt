@@ -37,7 +37,7 @@ class ShizukuMouseController {
     )
         .processNameSuffix("mouse")
         .daemon(false)
-        .version(17)  // bumped — setImePolicy for DeX-style phone-side keyboard
+        .version(18)  // bumped — showRecents and setDisplayDensity
 
     private val connection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
@@ -180,4 +180,13 @@ class ShizukuMouseController {
     // Returns false if the service isn't bound or the wm command isn't supported on this build.
     fun setImePolicy(displayId: Int, policy: Int): Boolean =
         runCatching { service?.setImePolicy(displayId, policy) ?: false }.getOrDefault(false)
+
+    // Opens the phone's own task switcher, for swiping away tasks left behind on it.
+    fun showRecents() {
+        runCatching { service?.showRecents() }
+    }
+
+    // Density override for one display; 0 restores the panel's own value.
+    fun setDisplayDensity(displayId: Int, density: Int): Boolean =
+        runCatching { service?.setDisplayDensity(displayId, density) ?: false }.getOrDefault(false)
 }
