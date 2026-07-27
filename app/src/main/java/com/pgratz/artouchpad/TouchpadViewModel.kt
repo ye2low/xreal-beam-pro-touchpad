@@ -44,7 +44,16 @@ private const val HOLD_SLOP_PX = 25
 private const val IME_POLICY_LOCAL = 0     // IME on the display that owns the focused field
 private const val IME_POLICY_FALLBACK = 1  // IME on the default display (phone) — DeX-style
 
-data class DisplayInfo(val id: Int, val name: String, val width: Int, val height: Int)
+data class DisplayInfo(
+    val id: Int,
+    val name: String,
+    val width: Int,
+    val height: Int,
+    // Effective density in dpi, override included. Read from the display rather than from
+    // the saved preference: the glasses come back under a new display id every time they
+    // are re-plugged or switch mode, and only the display itself knows what is in force.
+    val density: Int = 0,
+)
 
 data class TouchpadState(
     val isServiceEnabled: Boolean = false,
@@ -148,7 +157,13 @@ class TouchpadViewModel(app: Application) : AndroidViewModel(app) {
             val m = DisplayMetrics()
             @Suppress("DEPRECATION")
             d.getMetrics(m)
-            DisplayInfo(d.displayId, d.name ?: "Display ${d.displayId}", m.widthPixels, m.heightPixels)
+            DisplayInfo(
+                d.displayId,
+                d.name ?: "Display ${d.displayId}",
+                m.widthPixels,
+                m.heightPixels,
+                m.densityDpi,
+            )
         }
 
         // Pick the external display: prefer any non-default display,
@@ -161,7 +176,13 @@ class TouchpadViewModel(app: Application) : AndroidViewModel(app) {
                         val m = DisplayMetrics()
                         @Suppress("DEPRECATION")
                         d.getMetrics(m)
-                        DisplayInfo(d.displayId, d.name ?: "Presentation", m.widthPixels, m.heightPixels)
+                        DisplayInfo(
+                            d.displayId,
+                            d.name ?: "Presentation",
+                            m.widthPixels,
+                            m.heightPixels,
+                            m.densityDpi,
+                        )
                     }
             }
 
@@ -387,14 +408,22 @@ class TouchpadViewModel(app: Application) : AndroidViewModel(app) {
     // and this is how they get swiped away.
     fun showRecents() = mouse.showRecents()
 
-    // Density of the glasses display, in dpi; 0 restores the panel's own value. Window title
-    // bars are a fixed 42dp in the framework, so this is what makes them thinner — at 160
-    // dpi (what Samsung uses for DeX) a caption is 42 px instead of 56.
+    // Density of the glasses display, in dpi; 0 restores the panel's own value. Measured on
+    // this device: a window caption is 56 px at the panel's own 213 dpi and 42 px at 160,
+    // which is what Samsung uses for DeX. Any value is allowed — the framework refuses
+    // anything below 72 — but density scales everything on the display by the same factor,
+    // so it buys workspace rather than thinner captions relative to their content.
     fun setGlassesDensity(density: Int) {
-        prefs.edit().putInt("glasses_density", density).apply()
-        _state.update { it.copy(glassesDensity = density) }
+        val value = if (density <= 0) 0 else density.coerceIn(72, 640)
+        prefs.edit().putInt("glasses_density", value).apply()
+        _state.update { it.copy(glassesDensity = value) }
         val display = _state.value.targetDisplay ?: return
-        viewModelScope.launch(Dispatchers.IO) { mouse.setDisplayDensity(display.id, density) }
+        viewModelScope.launch(Dispatchers.IO) {
+            mouse.setDisplayDensity(display.id, value)
+            // The display reports its new density only after the change lands.
+            delay(600)
+            refresh()
+        }
     }
 
     fun toggleSettings() = _state.update { it.copy(showSettings = !it.showSettings) }

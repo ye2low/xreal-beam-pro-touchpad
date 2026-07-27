@@ -27,6 +27,7 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -43,6 +44,7 @@ import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -125,7 +127,8 @@ fun TouchpadScreen(viewModel: TouchpadViewModel) {
                 onScrollSpeed = viewModel::setScrollSpeed,
                 onNaturalScroll = viewModel::setNaturalScroll,
                 onDexKeyboard = viewModel::setDexKeyboard,
-                glassesDensity = state.glassesDensity,
+                // What the display actually reports, not what was last saved.
+                glassesDensity = state.targetDisplay?.density ?: 0,
                 onGlassesDensity = viewModel::setGlassesDensity,
                 onDismiss = viewModel::toggleSettings,
             )
@@ -258,31 +261,57 @@ private fun StatusBar(
 }
 
 
-// Interface scale on the glasses. This is a display density override, and density is the
-// only thing window title bars respond to — their height is a fixed 42dp in the framework,
-// so at 160 dpi a caption is 42 px where at the panel's own 213 it is 56. Lowering it
-// shrinks everything on the glasses by the same ratio and leaves the phone untouched.
+// Interface scale on the glasses: a density override on that display alone, the phone
+// untouched. Density is the only thing window captions respond to — their height is a fixed
+// 42dp in the framework — but it scales everything else by the same factor, so what it
+// really buys is workspace: measured here, the same window fits 5 rows at 213 dpi and 9
+// at 160.
+//
+// The field shows what the display currently reports rather than what was last saved. The
+// glasses come back under a new display id on every re-plug and mode switch, so the saved
+// number and reality can drift apart; the display is the one that knows.
 @Composable
 private fun GlassesScale(current: Int, onChange: (Int) -> Unit) {
-    // 160 is what Samsung uses for DeX; 0 means "leave the panel's own value alone".
-    val options = listOf(0 to "как есть", 180 to "мельче", 160 to "как DeX", 140 to "мелко")
+    var text by remember(current) { mutableStateOf(if (current > 0) current.toString() else "") }
+    val entered = text.toIntOrNull()
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Text("Масштаб на очках", color = TEXT_DIM, fontSize = 14.sp)
-        Text("Тоньше шапки окон, больше рабочего поля", color = TEXT_MUTED, fontSize = 11.sp)
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            options.forEach { (density, label) ->
-                val selected = density == current
-                Box(
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(if (selected) ACCENT_DIM else SURFACE)
-                        .clickable { onChange(density) }
-                        .padding(horizontal = 12.dp, vertical = 8.dp)
-                ) {
-                    Text(label, color = if (selected) ACCENT else TEXT_DIM, fontSize = 12.sp)
-                }
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            OutlinedTextField(
+                value = text,
+                onValueChange = { text = it.filter(Char::isDigit).take(3) },
+                singleLine = true,
+                modifier = Modifier.width(110.dp),
+                textStyle = LocalTextStyle.current.copy(fontSize = 15.sp),
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedTextColor = TEXT,
+                    unfocusedTextColor = TEXT,
+                    focusedBorderColor = ACCENT,
+                    unfocusedBorderColor = ACCENT_DIM,
+                ),
+            )
+            TextButton(
+                onClick = { entered?.let(onChange) },
+                enabled = entered != null && entered != current,
+            ) {
+                Text("Применить", color = if (entered != null) ACCENT else TEXT_MUTED, fontSize = 13.sp)
             }
         }
+        Text(
+            "213 — оригинал · 180 — мельче · 160 — как DeX · 140 — мелко · 120 — очень мелко",
+            color = TEXT_MUTED,
+            fontSize = 11.sp,
+        )
+        Text(
+            "Меньше число — мельче всё на очках и больше на них помещается. " +
+                "Разрешение не меняется. Ниже 72 система не пускает.",
+            color = TEXT_MUTED,
+            fontSize = 11.sp,
+        )
     }
 }
 
