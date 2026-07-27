@@ -9,9 +9,22 @@ The glasses connect via USB-C DisplayPort and appear as a second display in Andr
 - **Single-finger drag** — moves the cursor
 - **Tap** — left click
 - **Double tap** — double click
-- **Long press (600 ms)** — right click
+- **Hold, then drag** — holds the left button down: this is what drags windows and resizes them
 - **Two-finger drag** — scroll
-- **Bottom nav bar** — Back / Home / Recents / Screenshot (via Accessibility Service)
+- **Two-finger pinch** — zoom page content
+- **Top bar** — Back, aimed at the display the cursor is on, and the phone's own task switcher
+
+## Install
+
+`release/ar-touchpad-3.0.apk` installs as-is. It carries the debug signature, and that is
+deliberate: a differently signed build can only be installed over an uninstall, which wipes the
+app's files — including the key it pairs with wireless debugging, so pairing would have to be
+done again.
+
+Shizuku does not have to be started by hand. The app connects to this device's own `adbd` over
+loopback and runs Shizuku's starter itself. The six-digit pairing code is asked for once,
+through a notification, and never again. Wireless debugging has to be on in developer options,
+and note that it only comes up once the screen has been unlocked after a reboot.
 
 ## Requirements
 
@@ -19,32 +32,32 @@ The glasses connect via USB-C DisplayPort and appear as a second display in Andr
 |---|---|
 | Android | 14+ (minSdk 34) |
 | Architecture | arm64-v8a |
-| [Shizuku](https://shizuku.rikka.app/) | Running via Wireless Debugging or root |
-| Accessibility Service | Must be enabled in Settings for nav buttons |
+| [Shizuku](https://shizuku.rikka.app/) | Installed. The app starts it by itself — no computer needed. |
+| Wireless debugging | On, in developer options. It is what the app talks to. |
 
-Tested on **Pixel 10 + Viture XR Pro** running Android 16.
+Tested on **Pixel 10 + Viture XR Pro** running Android 16, and on **XREAL Beam Pro + XREAL One**
+running Android 14.
 
 ## Setup
 
-### 1. Enable Shizuku
-Follow the [Shizuku guide](https://shizuku.rikka.app/guide/setup/) to start Shizuku via Wireless Debugging (no root required):
-
-1. Enable **Developer Options** → **Wireless Debugging**
-2. Run `adb tcpip 5555` and `adb connect <phone-ip>`
-3. Start Shizuku from its app
-
-### 2. Install AR Touchpad
-Build and install the debug APK, or download a release:
+### 1. Install AR Touchpad
+Install `release/ar-touchpad-3.0.apk`, or build it:
 
 ```bash
-git clone https://github.com/pgratz1/AR-Touchpad.git
-cd AR-Touchpad
-./gradlew installDebug
+./gradlew assembleDebug
 ```
 
-### 3. Grant permissions
-- Open the app → tap **Grant** when Shizuku asks for permission
-- Enable the **AR Touchpad** Accessibility Service in **Settings → Accessibility**
+### 2. Start Shizuku
+Open the app. If Shizuku is not running it says so, and starting it is one tap. The first time,
+a notification asks for a pairing code: open **Developer options → Wireless debugging → Pair
+device with pairing code** and type the six digits into that notification, leaving the system
+dialog on screen. That happens once — from then on the app connects on its own.
+
+### 3. Grant permission
+Open the app → tap **Grant** when Shizuku asks.
+
+The Accessibility Service is optional and currently unused; the touchpad works entirely through
+the virtual mouse.
 
 ### 4. Connect the glasses
 Plug in the Viture XR Pro. Pull down the notification shade and switch to **Desktop / Extended** mode (not Mirror). The app's status bar shows all detected displays — the glasses should appear as a second display.
