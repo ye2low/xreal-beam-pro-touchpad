@@ -51,6 +51,8 @@ No root. No computer, after the one-time pairing described below.
    Pair device with pairing code**, and — *leaving that system dialog on screen* — pull down
    the notification shade and type the six digits into the notification's reply field.
 5. Tap **Grant** when Shizuku asks for permission.
+6. Set up the [recommended configuration](#recommended-configuration), then — with the
+   touchpad already open — plug in the glasses.
 
 Step 4 happens once, ever. Android stops advertising its pairing service the moment its own
 dialog leaves the screen, which is why the code is collected through a notification instead
@@ -161,21 +163,35 @@ framework overrides the request (see above).
 
 ## Recommended configuration
 
-This is the combination that behaves the way you would want, and it is what the settings were
-built to make reachable:
-
 | Setting | Value | Why |
 |---|---|---|
-| **Nebula** | **off** | Otherwise it seizes the glasses as soon as desktop mode is off |
-| **Force desktop mode** | **off** | So the keyboard can appear on the phone |
-| **Enable freeform windows** | **on** | Windows keep their title bars and stay resizable |
-| **Keyboard on Phone** | **on** | Typing happens on the phone, into the field on the glasses |
-| Glasses scale | taste | 213 for readability, 160 for room |
-| Natural Scroll | taste | |
+| **Nebula** | **off** | Otherwise it seizes the glasses the moment desktop mode is released |
+| **Desktop on connect** | **on** | Handles the desktop-mode timing on its own — see below |
+| **Freeform windows** | **on** | Windows keep title bars and stay resizable |
+| **Keyboard on phone** | **on** | Typing happens on the phone, into the field on the glasses |
+| Force desktop mode | leave alone | Driven by *Desktop on connect* |
+| Interface scale | taste | 213 native, 160 for more room |
 
-If your glasses' display modes turn out to be driven by Nebula, keep Nebula on and Force
-desktop mode on — and accept the keyboard appearing on the glasses. Those two cannot both be
-had; it is a framework decision, not a limitation of this app.
+**Open the touchpad first, then plug in the glasses.** The app has to be running to catch the
+moment they connect.
+
+### Why "Desktop on connect" exists
+
+The two things this setup needs are mutually exclusive, but only for an instant. Desktop mode
+has to be **on** when the glasses register, or they come up mirroring the phone. It has to be
+**off** afterwards, or the framework pins the keyboard to the glasses whatever any app asks
+for. By hand that means: switch it on, unplug, plug back in, switch it off — which nobody
+would guess. With this on, the app simply leaves the flag armed while nothing is connected and
+drops it a few seconds after the desktop is up.
+
+### The cost of turning Nebula off
+
+Nebula **is** the "Glasses" app — one package, `com.xreal.evapro.nebula`. With it disabled
+there is no display-mode chooser (Casting and the rest), and the display mode is decided
+entirely by the desktop-mode flag at the moment of connection. That is what *Desktop on
+connect* is for. If you need the mode chooser, turn Nebula back on and accept the keyboard
+staying on the glasses — those two cannot both be had, and it is a framework decision rather
+than a limitation of this app.
 
 ---
 

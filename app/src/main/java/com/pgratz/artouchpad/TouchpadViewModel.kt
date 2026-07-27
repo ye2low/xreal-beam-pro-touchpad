@@ -59,6 +59,9 @@ private const val FLING_NOMINAL_VELOCITY = 20f
 // Finger travel worth one wheel detent, used to turn pixels into fractional scroll units.
 private const val PIXELS_PER_DETENT = 60f
 
+// How long the desktop is given to establish itself before the flag is dropped.
+private const val DESKTOP_HANDOVER_MS = 4000L
+
 private const val KEY_DESKTOP_MODE = "force_desktop_mode_on_external_displays"
 private const val KEY_FREEFORM = "enable_freeform_support"
 
@@ -121,6 +124,8 @@ data class TouchpadState(
     // desktop on the glasses at all — and also what forces the keyboard to stay there.
     val desktopMode: Boolean = false,
     val freeformWindows: Boolean = false,
+    // Runs the desktop-mode handover on its own when the glasses are plugged in.
+    val autoDesktop: Boolean = true,
 ) {
     val externalDisplayConnected get() = targetDisplay != null
     val displayWidth get() = targetDisplay?.width ?: 1920
@@ -139,6 +144,7 @@ class TouchpadViewModel(app: Application) : AndroidViewModel(app) {
         inertiaSeconds = prefs.getFloat("inertia_seconds", 0.8f),
         smoothScroll = prefs.getBoolean("smooth_scroll", false),
         smoothZoom = prefs.getBoolean("smooth_zoom", false),
+        autoDesktop = prefs.getBoolean("auto_desktop", true),
         dexKeyboardEnabled = prefs.getBoolean("dex_keyboard", true),
         glassesDensity = prefs.getInt("glasses_density", 0),
     ))
@@ -247,6 +253,14 @@ class TouchpadViewModel(app: Application) : AndroidViewModel(app) {
                 desktopMode = readFlag(KEY_DESKTOP_MODE),
                 freeformWindows = readFlag(KEY_FREEFORM),
             )
+        }
+
+        // Arm before a connection, release just after one. Both edges, so unplugging the
+        // glasses leaves the flag ready for the next time without anyone thinking about it.
+        val hasExternal = external != null
+        if (hasExternal != externalWasPresent) {
+            externalWasPresent = hasExternal
+            if (hasExternal) releaseDesktopMode() else armDesktopMode()
         }
 
         ensurePanelWatch()
@@ -634,6 +648,39 @@ class TouchpadViewModel(app: Application) : AndroidViewModel(app) {
 
     fun setDesktopMode(enabled: Boolean) = setFlag(KEY_DESKTOP_MODE, enabled)
     fun setFreeformWindows(enabled: Boolean) = setFlag(KEY_FREEFORM, enabled)
+
+    fun setAutoDesktop(enabled: Boolean) {
+        prefs.edit().putBoolean("auto_desktop", enabled).apply()
+        _state.update { it.copy(autoDesktop = enabled) }
+        if (enabled && _state.value.targetDisplay == null) armDesktopMode()
+    }
+
+    // The two things this setup needs are mutually exclusive at any single moment, and only
+    // at that moment. Desktop mode has to be ON when the glasses register, or they come up
+    // mirroring; and it has to be OFF afterwards, or the framework pins the keyboard to the
+    // glasses. Doing it by hand means switching it on, replugging, and switching it off
+    // again — which nobody would guess. So the flag is simply left armed while nothing is
+    // connected, and dropped once the desktop is up.
+    private var externalWasPresent = false
+
+    private fun armDesktopMode() {
+        if (!_state.value.autoDesktop) return
+        viewModelScope.launch(Dispatchers.IO) {
+            if (!readFlag(KEY_DESKTOP_MODE)) mouse.setWindowingFlag(KEY_DESKTOP_MODE, true)
+            _state.update { it.copy(desktopMode = readFlag(KEY_DESKTOP_MODE)) }
+        }
+    }
+
+    private fun releaseDesktopMode() {
+        if (!_state.value.autoDesktop) return
+        viewModelScope.launch(Dispatchers.IO) {
+            // Let the display finish coming up as a desktop before letting go of the flag.
+            delay(DESKTOP_HANDOVER_MS)
+            mouse.setWindowingFlag(KEY_DESKTOP_MODE, false)
+            _state.update { it.copy(desktopMode = readFlag(KEY_DESKTOP_MODE)) }
+            _state.value.targetDisplay?.let { applyImePolicy(it.id) }
+        }
+    }
 
     private fun setFlag(key: String, enabled: Boolean) {
         viewModelScope.launch(Dispatchers.IO) {

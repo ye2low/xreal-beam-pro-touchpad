@@ -81,11 +81,10 @@ private const val DOUBLE_TAP_WINDOW_MS = 300L
 // showSettings is true) or the main layout: StatusBar → TouchpadSurface → optional
 // KeyboardProxy → NavigationBar.
 @Composable
-@OptIn(ExperimentalLayoutApi::class)
+
 fun TouchpadScreen(viewModel: TouchpadViewModel) {
     val state by viewModel.state.collectAsState()
     val context = LocalContext.current
-    val imeVisible = WindowInsets.isImeVisible
 
     Column(
         modifier = Modifier
@@ -149,6 +148,8 @@ fun TouchpadScreen(viewModel: TouchpadViewModel) {
                 onDesktopMode = viewModel::setDesktopMode,
                 freeformWindows = state.freeformWindows,
                 onFreeformWindows = viewModel::setFreeformWindows,
+                autoDesktop = state.autoDesktop,
+                onAutoDesktop = viewModel::setAutoDesktop,
                 onDismiss = viewModel::toggleSettings,
             )
         } else {
@@ -167,17 +168,14 @@ fun TouchpadScreen(viewModel: TouchpadViewModel) {
             // No navigation row: the glasses already take system swipes, so on-screen
             // Back/Home/Apps only ate height that the touchpad can use.
 
-            // Clipboard keys, only while the keyboard is up. They sit between the pad and
-            // the keyboard and take their strip from the pad, so the keyboard is not
-            // covered. Typing on the glasses is the one time these are wanted and the one
-            // time the pad can spare the room.
-            if (imeVisible) {
-                ClipboardBar(
-                    onCopy = { viewModel.clipboard(AKeyEvent.KEYCODE_C) },
-                    onCut = { viewModel.clipboard(AKeyEvent.KEYCODE_X) },
-                    onPaste = { viewModel.clipboard(AKeyEvent.KEYCODE_V) },
-                )
-            }
+            // Clipboard keys, always along the bottom. Selecting and copying happens far
+            // more often than typing — in an article, say, where no keyboard ever appears —
+            // so tying these to the keyboard put them out of reach exactly when wanted.
+            ClipboardBar(
+                onCopy = { viewModel.clipboard(AKeyEvent.KEYCODE_C) },
+                onCut = { viewModel.clipboard(AKeyEvent.KEYCODE_X) },
+                onPaste = { viewModel.clipboard(AKeyEvent.KEYCODE_V) },
+            )
         }
     }
 }
@@ -843,6 +841,8 @@ private fun SettingsPanel(
     onDesktopMode: (Boolean) -> Unit,
     freeformWindows: Boolean,
     onFreeformWindows: (Boolean) -> Unit,
+    autoDesktop: Boolean,
+    onAutoDesktop: (Boolean) -> Unit,
     onDismiss: () -> Unit,
 ) {
     Column(
@@ -905,6 +905,13 @@ private fun SettingsPanel(
 
         SectionHeader("Glasses")
         GlassesScale(current = glassesDensity, onChange = onGlassesDensity)
+        SettingSwitch(
+            title = "Desktop on connect",
+            subtitle = "Arms desktop mode while nothing is connected and drops it once the " +
+                "glasses are up, so they extend and the keyboard still lands on the phone.",
+            checked = autoDesktop,
+            onChange = onAutoDesktop,
+        )
         SettingSwitch(
             title = "Force desktop mode",
             subtitle = "Desktop on the glasses. While on, the system keeps the keyboard " +
