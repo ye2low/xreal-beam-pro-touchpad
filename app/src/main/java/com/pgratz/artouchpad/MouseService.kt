@@ -368,6 +368,26 @@ class MouseService : IMouseService.Stub() {
         false
     }
 
+    // Writes one of the two windowing developer options. The key is checked against a fixed
+    // pair rather than passed through: shell can write any secure setting, and there is no
+    // reason for this interface to be able to.
+    override fun setWindowingFlag(key: String, enabled: Boolean): Boolean {
+        if (key !in WINDOWING_FLAGS) {
+            Log.e(TAG, "refusing to write $key")
+            return false
+        }
+        return try {
+            val exit = Runtime.getRuntime()
+                .exec(arrayOf("settings", "put", "global", key, if (enabled) "1" else "0"))
+                .waitFor()
+            Log.d(TAG, "setWindowingFlag($key, $enabled) exit=$exit")
+            exit == 0
+        } catch (e: Exception) {
+            Log.e(TAG, "setWindowingFlag failed: $e")
+            false
+        }
+    }
+
     // Turns XREAL's Nebula on or off. `disable-user` rather than `disable`: it is the form
     // shell is allowed to use, it applies to this user only, and `pm enable` undoes it.
     override fun setNebulaEnabled(enabled: Boolean): Boolean = try {
@@ -671,6 +691,10 @@ class MouseService : IMouseService.Stub() {
     companion object {
         private const val TAG = "MouseService"
         private const val NEBULA_PACKAGE = "com.xreal.evapro.nebula"
+        private val WINDOWING_FLAGS = setOf(
+            "force_desktop_mode_on_external_displays",
+            "enable_freeform_support",
+        )
 
         const val UI_SET_EVBIT  = 0x40045564
         const val UI_SET_KEYBIT = 0x40045565

@@ -132,6 +132,10 @@ fun TouchpadScreen(viewModel: TouchpadViewModel) {
                 onGlassesDensity = viewModel::setGlassesDensity,
                 nebulaEnabled = state.nebulaEnabled,
                 onNebulaEnabled = viewModel::setNebulaEnabled,
+                desktopMode = state.desktopMode,
+                onDesktopMode = viewModel::setDesktopMode,
+                freeformWindows = state.freeformWindows,
+                onFreeformWindows = viewModel::setFreeformWindows,
                 onDismiss = viewModel::toggleSettings,
             )
         } else {
@@ -313,6 +317,34 @@ private fun GlassesScale(current: Int, onChange: (Int) -> Unit) {
                 "Разрешение не меняется. Ниже 72 система не пускает.",
             color = TEXT_MUTED,
             fontSize = 11.sp,
+        )
+    }
+}
+
+// A titled switch with an explanatory line under it.
+@Composable
+private fun SettingSwitch(
+    title: String,
+    subtitle: String,
+    checked: Boolean,
+    onChange: (Boolean) -> Unit,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(title, color = TEXT_DIM, fontSize = 14.sp)
+            Text(subtitle, color = TEXT_MUTED, fontSize = 11.sp)
+        }
+        Switch(
+            checked = checked,
+            onCheckedChange = onChange,
+            colors = SwitchDefaults.colors(
+                checkedThumbColor = ACCENT,
+                checkedTrackColor = ACCENT_DIM,
+            ),
         )
     }
 }
@@ -713,6 +745,10 @@ private fun SettingsPanel(
     onGlassesDensity: (Int) -> Unit,
     nebulaEnabled: Boolean,
     onNebulaEnabled: (Boolean) -> Unit,
+    desktopMode: Boolean,
+    onDesktopMode: (Boolean) -> Unit,
+    freeformWindows: Boolean,
+    onFreeformWindows: (Boolean) -> Unit,
     onDismiss: () -> Unit,
 ) {
     Column(
@@ -736,6 +772,24 @@ private fun SettingsPanel(
         SettingSlider("Scroll Speed", scrollSpeed, 0.3f..1.3f, "%.1f×", onScrollSpeed)
 
         GlassesScale(current = glassesDensity, onChange = onGlassesDensity)
+
+        SettingSwitch(
+            title = "Force desktop mode",
+            subtitle = "Рабочий стол на очках. Пока включён, система насильно держит " +
+                "клавиатуру на очках, что бы приложение ни просило. Действует с " +
+                "переподключения очков.",
+            checked = desktopMode,
+            onChange = onDesktopMode,
+        )
+
+        SettingSwitch(
+            title = "Enable freeform windows",
+            subtitle = "Окна с шапкой, которые двигаются и меняют размер. Включается " +
+                "отдельно от рабочего стола — при выключенном Force desktop mode " +
+                "оконность сохраняется.",
+            checked = freeformWindows,
+            onChange = onFreeformWindows,
+        )
 
         Row(
             modifier = Modifier.fillMaxWidth(),

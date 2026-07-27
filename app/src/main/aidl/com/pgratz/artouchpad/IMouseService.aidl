@@ -102,6 +102,14 @@ interface IMouseService {
     // reversible: `pm enable` brings it straight back.
     boolean setNebulaEnabled(boolean enabled) = 19;
 
+    // Writes one of the two windowing developer options in Settings.Global. Shell holds
+    // WRITE_SECURE_SETTINGS, which a normal app cannot be granted. Only these two keys are
+    // accepted; anything else is refused, so this stays a windowing switch rather than a
+    // way to write any secure setting at all.
+    //   "force_desktop_mode_on_external_displays" — desktop mode on the glasses
+    //   "enable_freeform_support"                 — freeform (resizable) windows
+    boolean setWindowingFlag(String key, boolean enabled) = 20;
+
     // Closes the uinput file descriptor and marks the device not ready.
     void destroy() = 16777114;
 }

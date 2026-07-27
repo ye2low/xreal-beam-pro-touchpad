@@ -18,6 +18,7 @@ import android.app.Application
 import android.content.Context
 import android.content.pm.PackageManager
 import android.hardware.display.DisplayManager
+import android.provider.Settings
 import android.util.DisplayMetrics
 import android.view.Display
 import androidx.lifecycle.AndroidViewModel
@@ -42,6 +43,9 @@ private const val HOLD_TO_PRESS_MS = 240
 private const val HOLD_SLOP_PX = 25
 
 private const val NEBULA_PACKAGE = "com.xreal.evapro.nebula"
+
+private const val KEY_DESKTOP_MODE = "force_desktop_mode_on_external_displays"
+private const val KEY_FREEFORM = "enable_freeform_support"
 
 // WindowManager DISPLAY_IME_POLICY_* values, passed to IWindowManager.setDisplayImePolicy.
 private const val IME_POLICY_LOCAL = 0     // IME on the display that owns the focused field
@@ -90,6 +94,10 @@ data class TouchpadState(
     // Whether XREAL's Nebula is enabled. It takes over the glasses whenever the desktop-mode
     // flag is off, so switching it off is what makes turning that flag off possible.
     val nebulaEnabled: Boolean = true,
+    // The two developer options this whole setup rests on. Desktop mode is what puts a
+    // desktop on the glasses at all — and also what forces the keyboard to stay there.
+    val desktopMode: Boolean = false,
+    val freeformWindows: Boolean = false,
 ) {
     val externalDisplayConnected get() = targetDisplay != null
     val displayWidth get() = targetDisplay?.width ?: 1920
@@ -209,6 +217,8 @@ class TouchpadViewModel(app: Application) : AndroidViewModel(app) {
                 cursorX = if (external != null) external.width / 2f else it.cursorX,
                 cursorY = if (external != null) external.height / 2f else it.cursorY,
                 nebulaEnabled = readNebulaEnabled(),
+                desktopMode = readFlag(KEY_DESKTOP_MODE),
+                freeformWindows = readFlag(KEY_FREEFORM),
             )
         }
 
@@ -447,6 +457,25 @@ class TouchpadViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch(Dispatchers.IO) {
             mouse.setNebulaEnabled(enabled)
             _state.update { it.copy(nebulaEnabled = readNebulaEnabled()) }
+        }
+    }
+
+    // Global settings are readable by any app; only writing them needs shell.
+    private fun readFlag(key: String): Boolean =
+        Settings.Global.getInt(getApplication<Application>().contentResolver, key, 0) == 1
+
+    fun setDesktopMode(enabled: Boolean) = setFlag(KEY_DESKTOP_MODE, enabled)
+    fun setFreeformWindows(enabled: Boolean) = setFlag(KEY_FREEFORM, enabled)
+
+    private fun setFlag(key: String, enabled: Boolean) {
+        viewModelScope.launch(Dispatchers.IO) {
+            mouse.setWindowingFlag(key, enabled)
+            _state.update {
+                it.copy(
+                    desktopMode = readFlag(KEY_DESKTOP_MODE),
+                    freeformWindows = readFlag(KEY_FREEFORM),
+                )
+            }
         }
     }
 

@@ -37,7 +37,7 @@ class ShizukuMouseController {
     )
         .processNameSuffix("mouse")
         .daemon(false)
-        .version(19)  // bumped — setNebulaEnabled
+        .version(20)  // bumped — setWindowingFlag
 
     private val connection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
@@ -193,4 +193,8 @@ class ShizukuMouseController {
     // Turns XREAL's Nebula on or off, reversibly.
     fun setNebulaEnabled(enabled: Boolean): Boolean =
         runCatching { service?.setNebulaEnabled(enabled) ?: false }.getOrDefault(false)
+
+    // Desktop mode / freeform windows, the two developer options this setup depends on.
+    fun setWindowingFlag(key: String, enabled: Boolean): Boolean =
+        runCatching { service?.setWindowingFlag(key, enabled) ?: false }.getOrDefault(false)
 }
