@@ -100,6 +100,13 @@ dependencies {
     // HiddenApiBypass: allows reflection access to InputManagerGlobal.injectInputEvent
     // and InputEvent.setDisplayId, which are restricted hidden APIs on Android 9+.
     implementation(libs.hiddenapibypass)
+    // libadb-android speaks the ADB wire protocol, including the Android 11 pairing
+    // handshake, so the app can reach this device's own adbd over loopback and start
+    // Shizuku by itself after a reboot. Conscrypt supplies the TLSv1.3 stack adbd
+    // requires; sun-security builds the self-signed certificate that identifies us.
+    implementation(libs.libadb)
+    implementation(libs.conscrypt)
+    implementation(libs.sun.security)
     debugImplementation(libs.androidx.ui.tooling)
     debugImplementation(libs.androidx.ui.test.manifest)
 }

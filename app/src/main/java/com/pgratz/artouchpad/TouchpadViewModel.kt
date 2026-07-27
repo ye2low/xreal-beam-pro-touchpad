@@ -21,6 +21,8 @@ import android.util.DisplayMetrics
 import android.view.Display
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.pgratz.artouchpad.adb.AdbPairingService
+import com.pgratz.artouchpad.adb.ShizukuBootstrap
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -61,6 +63,10 @@ data class TouchpadState(
     val showKeyboard: Boolean = false,
     // True while the on-screen left button holds BTN_LEFT down.
     val leftHeld: Boolean = false,
+    // Self-start of Shizuku over this device's own adb. bootstrapStatus is a short line
+    // shown under the status bar.
+    val bootstrapStatus: String? = null,
+    val bootstrapBusy: Boolean = false,
     // User preference: show the keyboard on the phone (IME fallback policy) instead of
     // on the glasses. dexKeyboardActive reflects whether the policy actually took effect
     // (false when `wm set-display-ime-policy` is unsupported on this build).
@@ -110,6 +116,15 @@ class TouchpadViewModel(app: Application) : AndroidViewModel(app) {
         TouchpadAccessibilityService.onExternalTextFocus = {
             _state.update { it.copy(showKeyboard = true) }
         }
+        startShizukuIfNeeded()
+    }
+
+    // Nothing works until Shizuku is up, and after a reboot it never is. Called on every
+    // return to the app rather than only at creation, because coming back to a process that
+    // is still alive does not rebuild this ViewModel — which is exactly the case after
+    // Shizuku has been killed while the app sat in the background.
+    fun startShizukuIfNeeded() {
+        if (!mouse.hasShizuku() && !_state.value.bootstrapBusy) startShizuku()
     }
 
     // Mirrors what is typed here into the field on the glasses. Text is written into the
@@ -170,6 +185,43 @@ class TouchpadViewModel(app: Application) : AndroidViewModel(app) {
 
     // Opens the Shizuku permission dialog so the user can grant shell-uid access.
     fun requestShizukuPermission() = mouse.requestPermission()
+
+    // Shizuku is dead after every reboot and cannot restart itself without root, which used
+    // to mean plugging the phone into a computer before the touchpad would work. Instead the
+    // app talks to this device's own adbd over loopback and runs the starter — so opening
+    // the app is the whole procedure. Called automatically on launch; the button in the
+    // status bar just runs it again after a failure.
+    fun startShizuku() {
+        if (_state.value.bootstrapBusy) return
+        _state.update { it.copy(bootstrapBusy = true, bootstrapStatus = "запускаю Shizuku…") }
+        viewModelScope.launch {
+            val result = ShizukuBootstrap.start(getApplication())
+            val message = when (result) {
+                ShizukuBootstrap.Result.Started -> "Shizuku запущен"
+                ShizukuBootstrap.Result.AlreadyRunning -> null
+                ShizukuBootstrap.Result.WirelessDebuggingOff ->
+                    "включи отладку по Wi-Fi в настройках разработчика"
+                ShizukuBootstrap.Result.PairingRequired ->
+                    "нужно один раз связаться с отладкой по Wi-Fi — смотри уведомление"
+                ShizukuBootstrap.Result.ShizukuNotInstalled -> "Shizuku не установлен"
+                is ShizukuBootstrap.Result.Failed -> "не вышло: ${result.reason}"
+            }
+            // Pairing cannot happen in a window of ours: the system stops advertising its
+            // pairing service as soon as its own dialog is backgrounded, so the code is
+            // collected through a notification instead.
+            if (result == ShizukuBootstrap.Result.PairingRequired) {
+                AdbPairingService.start(getApplication())
+            }
+            _state.update { it.copy(bootstrapBusy = false, bootstrapStatus = message) }
+            if (result == ShizukuBootstrap.Result.Started) {
+                // The starter returns before Shizuku's binder is up.
+                delay(1500)
+                refresh()
+                mouse.bind()
+            }
+        }
+    }
+
 
     // Tracks the (displayId, policy) last applied successfully, so refresh() calls
     // (which fire on every display event) don't re-exec the wm command needlessly.

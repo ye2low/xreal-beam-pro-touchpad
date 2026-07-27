@@ -96,8 +96,11 @@ fun TouchpadScreen(viewModel: TouchpadViewModel) {
             serviceEnabled = state.isServiceEnabled,
             targetDisplay = state.targetDisplay,
             touchMode = state.touchMode,
+            bootstrapBusy = state.bootstrapBusy,
+            bootstrapStatus = state.bootstrapStatus,
             onBack = { viewModel.pressKey(AKeyEvent.KEYCODE_BACK) },
             onSettingsClick = viewModel::toggleSettings,
+            onStartShizuku = viewModel::startShizuku,
             onGrantShizuku = viewModel::requestShizukuPermission,
             onConnectMouse = { viewModel.mouse.bind() },
             onEnableService = {
@@ -139,6 +142,7 @@ fun TouchpadScreen(viewModel: TouchpadViewModel) {
             // Back/Home/Apps only ate height that the touchpad can use.
         }
     }
+
 }
 
 // Top status bar showing the app title, three status dots (Mouse/Display/Nav),
@@ -152,8 +156,11 @@ private fun StatusBar(
     serviceEnabled: Boolean,
     targetDisplay: DisplayInfo?,
     touchMode: TouchMode,
+    bootstrapBusy: Boolean,
+    bootstrapStatus: String?,
     onBack: () -> Unit,
     onSettingsClick: () -> Unit,
+    onStartShizuku: () -> Unit,
     onGrantShizuku: () -> Unit,
     onConnectMouse: () -> Unit,
     onEnableService: () -> Unit,
@@ -191,8 +198,21 @@ private fun StatusBar(
 
             Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
                 when {
+                    // Shizuku dies on every reboot and cannot come back on its own without
+                    // root, so this is the normal state after a restart rather than an
+                    // error. Tapping starts it through the phone's own adb.
                     !shizukuAvailable ->
-                        Text("Shizuku off", color = Color(0xFFFF7043), fontSize = 11.sp)
+                        TextButton(
+                            onClick = onStartShizuku,
+                            enabled = !bootstrapBusy,
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                        ) {
+                            Text(
+                                if (bootstrapBusy) "запускаю…" else "Запустить Shizuku",
+                                color = Color(0xFFFF7043),
+                                fontSize = 12.sp,
+                            )
+                        }
                     !shizukuPermission ->
                         TextButton(onClick = onGrantShizuku, contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)) {
                             Text("Grant Shizuku", color = Color(0xFFFF7043), fontSize = 12.sp)
@@ -212,9 +232,19 @@ private fun StatusBar(
             }
         }
 
+        bootstrapStatus?.let {
+            Text(
+                it,
+                color = TEXT_MUTED,
+                fontSize = 11.sp,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 2.dp),
+            )
+        }
+
         HorizontalDivider(color = Color(0xFF1E2A38), thickness = 1.dp)
     }
 }
+
 
 // Small colored circle (green = active, gray = inactive) followed by a text label.
 // Used in StatusBar to show Mouse/Display/Nav readiness at a glance.

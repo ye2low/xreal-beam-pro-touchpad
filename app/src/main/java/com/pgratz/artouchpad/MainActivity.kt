@@ -40,6 +40,15 @@ class MainActivity : ComponentActivity() {
         // covered it.
         window.setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
 
+        // The one-time wireless-debugging pairing asks for its code through a notification,
+        // because the system's own pairing dialog has to stay on screen while it is typed.
+        // Without this permission that notification would never appear.
+        if (checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS)
+            != android.content.pm.PackageManager.PERMISSION_GRANTED
+        ) {
+            requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 1)
+        }
+
         setContent {
             ARTouchpadTheme {
                 TouchpadScreen(viewModel = viewModel)
@@ -52,5 +61,6 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         viewModel.refresh()
+        viewModel.startShizukuIfNeeded()
     }
 }
