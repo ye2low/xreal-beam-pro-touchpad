@@ -18,6 +18,7 @@ import android.content.Context
 import android.content.pm.PackageManager
 import android.provider.Settings
 import android.util.Log
+import io.github.muntashirakon.adb.AdbPairingRequiredException
 import io.github.muntashirakon.adb.android.AdbMdns
 import io.github.muntashirakon.adb.android.AndroidUtils
 import kotlinx.coroutines.Dispatchers
@@ -118,10 +119,16 @@ object ShizukuBootstrap {
 
         val manager = AdbConnectionManager.getInstance(context)
         try {
-            val connected = withTimeoutOrNull(45_000) {
-                runCatching { manager.autoConnect(context, 30_000) }.getOrDefault(false)
-            } ?: false
-            if (!connected) return@withContext Result.PairingRequired
+            val connected = try {
+                withTimeoutOrNull(45_000) { manager.autoConnect(context, 30_000) } ?: false
+            } catch (e: AdbPairingRequiredException) {
+                // adbd has forgotten our key — the only case where pairing again is the
+                // right advice. A plain connection failure is not: it usually means adbd
+                // has not finished publishing its port yet, and telling the user to re-pair
+                // would send them off to fix something that is not broken.
+                return@withContext Result.PairingRequired
+            }
+            if (!connected) return@withContext Result.Failed("adb не отозвался")
 
             // Exactly what Shizuku's own starter runs; --apk lets the shell-side process
             // load Shizuku's classes out of the installed APK.
