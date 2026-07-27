@@ -44,7 +44,10 @@ There are no unit or instrumented tests (`src/test` and `src/androidTest` don't 
 - For release builds, add signing keys to `local.properties`: `KEYSTORE_PATH`, `KEYSTORE_PASSWORD`, `KEY_ALIAS`, `KEY_PASSWORD`
 
 Runtime on device:
-- [Shizuku](https://shizuku.rikka.app/) running (grants shell uid = `input` group = `/dev/uinput` access)
+- [Shizuku](https://shizuku.rikka.app/) installed (grants shell uid = `input` group = `/dev/uinput` access).
+  The app starts it by itself — see "Starting Shizuku" below — so no computer is needed after a
+  one-time pairing.
+- Wireless debugging enabled in developer options; that is what the app talks to.
 - Accessibility Service enabled in Settings → Accessibility → AR Touchpad
 
 ## Architecture
@@ -61,6 +64,9 @@ app/src/main/
     TouchpadViewModel.kt             — State, display detection, gesture dispatch, smoothing filter
     UinputNative.kt                  — Kotlin object declaring external JNI functions
     TouchpadAccessibilityService.kt  — Handles nav bar actions; detects external text focus
+    adb/AdbConnectionManager.kt      — RSA key + self-signed cert this app shows to adbd
+    adb/ShizukuBootstrap.kt          — Connects to the device's own adbd, runs Shizuku's starter
+    adb/AdbPairingService.kt         — One-time pairing, code collected via a notification reply
     ui/TouchpadScreen.kt             — Compose UI: status bar, touch surface, keyboard proxy, nav bar
 ```
 
@@ -86,5 +92,27 @@ app/src/main/
 **Text selection flow:** Long-press (600 ms, haptic) → drag moves cursor with `BTN_LEFT` held → release calls `mouseUp()` + `pressKeyWithCtrl(KEYCODE_C)` to auto-copy. A second finger during select drag cancels selection (`onSelectEnd()`).
 
 **Text input (two paths):** Primary is DeX-style direct typing: `MouseService.setImePolicy` calls `IWindowManager.setDisplayImePolicy(displayId, FALLBACK)` via reflection (shell uid holds the required `INTERNAL_SYSTEM_WINDOW` permission; there is no `wm` shell subcommand for this), so a field focused on the glasses shows Gboard on the phone while the InputConnection stays with the field — every keystroke lands directly. Applied in `TouchpadViewModel.applyImePolicy` when the external display is detected, gated by the persisted `dexKeyboardEnabled` preference, restored to `local` in `onCleared()`. `dexKeyboardActive` in state reflects whether the call actually worked on this build. Fallback (when the command is unsupported or the toggle is off): the keyboard proxy — an editable-field focus on the glasses (detected via `AccessibilityEvent.TYPE_VIEW_FOCUSED` with `window.displayId != DEFAULT_DISPLAY`) shows a phone-side `EditText` strip; text accumulates on the phone, then is injected via `typeText` + `pressKey(ENTER)` after a 200 ms IME teardown delay, with a delayed BACK press dismissing the glasses-side IME.
+
+**Starting Shizuku:** Shizuku hands out the shell privileges everything above depends on, but it
+can only be started by something that already has them, so it is dead after every reboot. Its own
+"start on boot" needs root. Instead the app connects to *this device's own* `adbd` — it listens on
+every interface, loopback included — as an ordinary ADB client and runs
+`<shizuku nativeLibraryDir>/libshizuku.so --apk=<shizuku sourceDir>`, the same command Shizuku's
+own starter uses. `TouchpadViewModel.startShizukuIfNeeded()` fires from `MainActivity.onResume`,
+so opening the app is the whole procedure.
+
+Trust is established once: `adbd` keeps the app's public key in `/data/misc/adb/adb_keys` across
+reboots and refreshes its timestamp on every connection, so it never expires. The pairing code is
+collected through a **notification reply**, not a screen of the app's own — measured on device, the
+system stops advertising `_adb-tls-pairing._tcp` the moment its own pairing dialog leaves the
+foreground, so a window asking for the code would cancel the thing it was asking about. Pulling
+down the notification shade leaves that dialog alive. Shizuku's own `AdbPairingService` does this
+for the same reason.
+
+Two constraints worth not rediscovering: wireless debugging only comes up **after the screen is
+unlocked** following a reboot (before that every port refuses the connection), which is why the
+start hangs off `onResume` rather than `BOOT_COMPLETED`; and Shizuku genuinely cannot be replaced
+by granting this app permissions directly — `/dev/uinput` carries the SELinux label `uhid_device`,
+for which `untrusted_app` has no rule at all, and `INTERNAL_SYSTEM_WINDOW` is `signature|module`.
 
 **Settings persistence:** `sensitivity` (default 0.5), `scrollSpeed`, `naturalScroll`, and `dexKeyboardEnabled` live in SharedPreferences `touchpad_prefs`, loaded into the initial `TouchpadState` and written in the ViewModel setters.
