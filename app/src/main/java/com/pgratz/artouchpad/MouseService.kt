@@ -544,7 +544,8 @@ class MouseService : IMouseService.Stub() {
         for (file in files) {
             val stream = runCatching { java.io.FileInputStream(file) }.getOrNull() ?: continue
             synchronized(watchers) { watchers.add(stream) }
-            Thread { watchLoop(stream, sensitivity, holdMs, slopPx) }
+            val maxY = readAbsMax(file.absolutePath)
+            Thread { watchLoop(stream, maxY, sensitivity, holdMs, slopPx) }
                 .apply { isDaemon = true }.start()
         }
 
@@ -568,6 +569,26 @@ class MouseService : IMouseService.Stub() {
     // (no finger, several fingers, or the finger has wandered off).
     @Volatile private var restingSince = 0L
 
+    // The band of the panel the touch surface occupies, as fractions of its height.
+    @Volatile private var padTop = 0f
+    @Volatile private var padBottom = 1f
+
+    override fun setPanelBounds(topFraction: Float, bottomFraction: Float) {
+        padTop = topFraction
+        padBottom = bottomFraction
+        Log.d(TAG, "panel bounds $topFraction..$bottomFraction")
+    }
+
+    // The vertical extent of a panel, from `getevent -p`. There is no way to identify the
+    // touchscreen up front at this uid, so every node is opened and asked; the ones that are
+    // not touchscreens report nothing and are simply never filtered.
+    private fun readAbsMax(path: String): Int = runCatching {
+        val out = Runtime.getRuntime().exec(arrayOf("getevent", "-p", path))
+            .inputStream.bufferedReader().readText()
+        Regex("""0036\s*:\s*value\s*-?\d+,\s*min\s*-?\d+,\s*max\s*(\d+)""")
+            .find(out)?.groupValues?.get(1)?.toInt() ?: 0
+    }.getOrDefault(0)
+
     private class Contact {
         var x = 0
         var y = 0
@@ -582,9 +603,16 @@ class MouseService : IMouseService.Stub() {
         // jump and marks the contact as wandering the moment it truly appears.
         var placed = false
         var strayed = false  // travelled beyond the slop, so it is a swipe, not a rest
+        var outside = false  // landed off the touch surface — the keyboard, most often
     }
 
-    private fun watchLoop(stream: java.io.FileInputStream, sensitivity: Float, holdMs: Int, slopPx: Int) {
+    private fun watchLoop(
+        stream: java.io.FileInputStream,
+        maxY: Int,
+        sensitivity: Float,
+        holdMs: Int,
+        slopPx: Int,
+    ) {
         val buf = ByteArray(EVENT_SIZE)
         val contacts = HashMap<Int, Contact>()
         var slot = 0
@@ -634,24 +662,33 @@ class MouseService : IMouseService.Stub() {
                         c.prevX = c.x
                         c.prevY = c.y
                         c.downAt = System.currentTimeMillis()
+                        // Only a finger that landed on the touch surface can hold the button.
+                        // A key on the keyboard held down is a key, not a resting finger.
+                        if (maxY > 0) {
+                            val f = c.y.toFloat() / maxY
+                            c.outside = f < padTop || f > padBottom
+                        }
                         continue
                     }
                     val dist = kotlin.math.hypot((c.x - c.downX).toFloat(), (c.y - c.downY).toFloat())
                     if (dist > slopPx) c.strayed = true
                 }
 
-                // Publish what the ticker needs: a lone finger that has not wandered off.
-                val candidate = contacts.values.singleOrNull()?.takeIf { it.placed && !it.strayed }
+                // Publish what the ticker needs: a lone finger on the pad that has not
+                // wandered off. Fingers outside the pad are not counted at all, so typing
+                // with one hand does not stop the other from holding.
+                val onPad = contacts.values.filter { !it.outside }
+                val candidate = onPad.singleOrNull()?.takeIf { it.placed && !it.strayed }
                 restingSince = candidate?.downAt ?: 0L
 
                 if (leftHeld) {
                     if (!steering) {
                         // Start steering from where the fingers are now, so the press itself
                         // does not fling the cursor by the distance accumulated before it.
-                        contacts.values.forEach { it.prevX = it.x; it.prevY = it.y }
+                        onPad.forEach { it.prevX = it.x; it.prevY = it.y }
                         steering = true
                     }
-                    for (c in contacts.values) {
+                    for (c in onPad) {
                         accX += (c.x - c.prevX) * sensitivity
                         accY += (c.y - c.prevY) * sensitivity
                         c.prevX = c.x

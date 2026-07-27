@@ -155,6 +155,7 @@ fun TouchpadScreen(viewModel: TouchpadViewModel) {
                 onScroll = viewModel::performScroll,
                 onPinch = viewModel::pinchZoom,
                 onTouchModeChanged = viewModel::setTouchMode,
+                onBoundsChanged = viewModel::setPadBounds,
             )
             // No navigation row: the glasses already take system swipes, so on-screen
             // Back/Home/Apps only ate height that the touchpad can use.
@@ -393,6 +394,7 @@ private fun TouchpadSurface(
     onScroll: (Float, Float) -> Unit,
     onPinch: (Float) -> Unit,
     onTouchModeChanged: (TouchMode) -> Unit,
+    onBoundsChanged: (Float, Float) -> Unit,
 ) {
     var touchPoints by remember { mutableStateOf(listOf<Offset>()) }
     val haptic = LocalHapticFeedback.current
@@ -404,6 +406,14 @@ private fun TouchpadSurface(
         Canvas(
             modifier = Modifier
                 .fillMaxSize()
+                // The service watches the whole touchscreen and knows nothing about windows,
+                // so it is told where this surface actually sits. Its bottom edge moves up
+                // when the keyboard appears, and holding a key down there must stay a key
+                // press rather than becoming a held mouse button.
+                .onGloballyPositioned {
+                    val top = it.positionInWindow().y
+                    onBoundsChanged(top, top + it.size.height)
+                }
                 .clip(RoundedCornerShape(20.dp))
                 .background(if (enabled) SURFACE else SURFACE_DISABLED)
                 .pointerInput(enabled) {

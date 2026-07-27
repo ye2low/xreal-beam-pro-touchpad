@@ -37,7 +37,7 @@ class ShizukuMouseController {
     )
         .processNameSuffix("mouse")
         .daemon(false)
-        .version(20)  // bumped — setWindowingFlag
+        .version(21)  // bumped — setPanelBounds
 
     private val connection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
@@ -193,6 +193,11 @@ class ShizukuMouseController {
     // Turns XREAL's Nebula on or off, reversibly.
     fun setNebulaEnabled(enabled: Boolean): Boolean =
         runCatching { service?.setNebulaEnabled(enabled) ?: false }.getOrDefault(false)
+
+    // The band of the screen the touch surface occupies; the hold ignores anything outside it.
+    fun setPanelBounds(topFraction: Float, bottomFraction: Float) {
+        runCatching { service?.setPanelBounds(topFraction, bottomFraction) }
+    }
 
     // Desktop mode / freeform windows, the two developer options this setup depends on.
     fun setWindowingFlag(key: String, enabled: Boolean): Boolean =

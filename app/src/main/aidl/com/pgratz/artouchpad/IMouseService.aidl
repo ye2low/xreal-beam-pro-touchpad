@@ -110,6 +110,13 @@ interface IMouseService {
     //   "enable_freeform_support"                 — freeform (resizable) windows
     boolean setWindowingFlag(String key, boolean enabled) = 20;
 
+    // Where the touch surface sits, as fractions of screen height. Contacts landing outside
+    // this band are ignored by the hold above: this service watches the whole touchscreen and
+    // knows nothing about windows, so without it a key held down on the keyboard — backspace
+    // above all — was read as a finger resting on the pad and became a held mouse button,
+    // and the key stopped repeating. Passing 0 and 1 watches the whole panel again.
+    void setPanelBounds(float topFraction, float bottomFraction) = 21;
+
     // Closes the uinput file descriptor and marks the device not ready.
     void destroy() = 16777114;
 }

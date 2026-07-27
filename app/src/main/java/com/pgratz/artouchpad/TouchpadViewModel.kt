@@ -367,6 +367,7 @@ class TouchpadViewModel(app: Application) : AndroidViewModel(app) {
         if (watchStarted || !_state.value.mouseReady) return
         watchStarted = true
         mouse.startPanelWatch(_state.value.sensitivity, HOLD_TO_PRESS_MS, HOLD_SLOP_PX)
+        pushPadBounds()
         holdPollJob?.cancel()
         holdPollJob = viewModelScope.launch {
             while (true) {
@@ -446,6 +447,33 @@ class TouchpadViewModel(app: Application) : AndroidViewModel(app) {
             }
         }
     }
+
+    // Where the touch surface actually sits on the screen. The service reads the touchscreen
+    // directly and knows nothing about windows, so without this every key held down on the
+    // keyboard — backspace above all — was read as a finger resting on the pad and turned
+    // into a held mouse button, and the key stopped repeating. Bounds rather than "hide the
+    // keyboard region": the pad shrinks to make room for the keyboard anyway, and holding
+    // inside what is left has to keep working, since that is what selecting text is made of.
+    private var padTop = 0f
+    private var padBottom = 0f
+
+    fun setPadBounds(top: Float, bottom: Float) {
+        if (top == padTop && bottom == padBottom) return
+        padTop = top
+        padBottom = bottom
+        pushPadBounds()
+    }
+
+    // Layout settles before the service is bound, and the bounds are then never resent on
+    // their own — so they are pushed again whenever the watch (re)starts.
+    private fun pushPadBounds() {
+        val height = screenHeight.toFloat()
+        if (height <= 0f || padBottom <= padTop) return
+        mouse.setPanelBounds(padTop / height, padBottom / height)
+    }
+
+    private val screenHeight =
+        app.resources.displayMetrics.heightPixels
 
     // Touching the pad stops a fling in progress, the way catching a spinning page does.
     fun stopFling() {
