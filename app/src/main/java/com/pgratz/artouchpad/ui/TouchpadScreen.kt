@@ -23,6 +23,8 @@ import android.widget.EditText
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.*
@@ -320,6 +322,13 @@ private fun GlassesScale(current: Int, onChange: (Int) -> Unit) {
         )
     }
 }
+
+// Version and build number, read from the package manager rather than BuildConfig so that
+// what is shown is the build actually installed.
+private fun appVersion(context: android.content.Context): String = runCatching {
+    val info = context.packageManager.getPackageInfo(context.packageName, 0)
+    "v${info.versionName} (${info.longVersionCode})"
+}.getOrDefault("")
 
 // A titled switch with an explanatory line under it.
 @Composable
@@ -754,6 +763,9 @@ private fun SettingsPanel(
     Column(
         modifier = Modifier
             .fillMaxSize()
+            // The list outgrew the screen once the windowing switches arrived, and without
+            // this everything below the fold was simply unreachable.
+            .verticalScroll(rememberScrollState())
             .padding(24.dp),
         verticalArrangement = Arrangement.spacedBy(20.dp),
     ) {
@@ -762,7 +774,10 @@ private fun SettingsPanel(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text("Settings", color = TEXT, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+            Column {
+                Text("Settings", color = TEXT, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+                Text(appVersion(LocalContext.current), color = TEXT_MUTED, fontSize = 11.sp)
+            }
             TextButton(onClick = onDismiss) {
                 Text("Done", color = ACCENT, fontSize = 14.sp)
             }

@@ -16,7 +16,7 @@ The glasses connect via USB-C DisplayPort and appear as a second display in Andr
 
 ## Install
 
-`release/ar-touchpad-3.0.apk` installs as-is. It carries the debug signature, and that is
+`release/ar-touchpad-3.1.apk` installs as-is. It carries the debug signature, and that is
 deliberate: a differently signed build can only be installed over an uninstall, which wipes the
 app's files — including the key it pairs with wireless debugging, so pairing would have to be
 done again.
@@ -41,7 +41,7 @@ running Android 14.
 ## Setup
 
 ### 1. Install AR Touchpad
-Install `release/ar-touchpad-3.0.apk`, or build it:
+Install `release/ar-touchpad-3.1.apk`, or build it:
 
 ```bash
 ./gradlew assembleDebug
@@ -74,7 +74,8 @@ app/
 │       ├── ShizukuMouseController.kt    — Binds/unbinds the Shizuku service
 │       ├── TouchpadViewModel.kt         — State, display detection, gesture dispatch
 │       ├── UinputNative.kt             — Kotlin wrapper for the JNI library
-│       ├── TouchpadAccessibilityService.kt — Global nav actions (Back/Home/etc.)
+│       ├── adb/                          — Starts Shizuku over this device's own adbd
+│       ├── TouchpadAccessibilityService.kt — Left over; nothing calls it any more
 │       └── ui/TouchpadScreen.kt        — Compose UI: touch surface + status bar
 ```
 
