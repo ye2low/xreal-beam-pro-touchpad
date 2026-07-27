@@ -16,6 +16,7 @@ package com.pgratz.artouchpad
 
 import android.app.Application
 import android.content.Context
+import android.content.pm.PackageManager
 import android.hardware.display.DisplayManager
 import android.util.DisplayMetrics
 import android.view.Display
@@ -39,6 +40,8 @@ enum class TouchMode { IDLE, CURSOR, SCROLL, SELECT }
 // to press anything.
 private const val HOLD_TO_PRESS_MS = 240
 private const val HOLD_SLOP_PX = 25
+
+private const val NEBULA_PACKAGE = "com.xreal.evapro.nebula"
 
 // WindowManager DISPLAY_IME_POLICY_* values, passed to IWindowManager.setDisplayImePolicy.
 private const val IME_POLICY_LOCAL = 0     // IME on the display that owns the focused field
@@ -84,6 +87,9 @@ data class TouchpadState(
     // Density override applied to the glasses, in dpi; 0 means the panel's own value.
     // It is the only lever on the thickness of window title bars.
     val glassesDensity: Int = 0,
+    // Whether XREAL's Nebula is enabled. It takes over the glasses whenever the desktop-mode
+    // flag is off, so switching it off is what makes turning that flag off possible.
+    val nebulaEnabled: Boolean = true,
 ) {
     val externalDisplayConnected get() = targetDisplay != null
     val displayWidth get() = targetDisplay?.width ?: 1920
@@ -202,6 +208,7 @@ class TouchpadViewModel(app: Application) : AndroidViewModel(app) {
                 targetDisplay = external,
                 cursorX = if (external != null) external.width / 2f else it.cursorX,
                 cursorY = if (external != null) external.height / 2f else it.cursorY,
+                nebulaEnabled = readNebulaEnabled(),
             )
         }
 
@@ -423,6 +430,23 @@ class TouchpadViewModel(app: Application) : AndroidViewModel(app) {
             // The display reports its new density only after the change lands.
             delay(600)
             refresh()
+        }
+    }
+
+    // Reads Nebula's current state straight from the package manager, so the switch reflects
+    // the device rather than a remembered value — it can be changed from Android's own app
+    // settings just as well. MATCH_UNINSTALLED_PACKAGES is needed because a disabled package
+    // is otherwise invisible.
+    private fun readNebulaEnabled(): Boolean = runCatching {
+        getApplication<Application>().packageManager
+            .getApplicationInfo(NEBULA_PACKAGE, PackageManager.MATCH_UNINSTALLED_PACKAGES)
+            .enabled
+    }.getOrDefault(true)
+
+    fun setNebulaEnabled(enabled: Boolean) {
+        viewModelScope.launch(Dispatchers.IO) {
+            mouse.setNebulaEnabled(enabled)
+            _state.update { it.copy(nebulaEnabled = readNebulaEnabled()) }
         }
     }
 

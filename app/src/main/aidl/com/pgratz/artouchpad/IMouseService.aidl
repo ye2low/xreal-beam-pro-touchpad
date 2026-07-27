@@ -95,6 +95,13 @@ interface IMouseService {
     // so it scales with display density and with nothing else.
     boolean setDisplayDensity(int displayId, int density) = 18;
 
+    // Enables or disables XREAL's Nebula package. Nebula takes over the glasses whenever the
+    // desktop-mode flag is off, which is the only reason that flag has to stay on — and with
+    // it on, the system forces the keyboard onto the glasses no matter what policy is asked
+    // for. Turning Nebula off is what breaks that deadlock. Uses `pm disable-user`, which is
+    // reversible: `pm enable` brings it straight back.
+    boolean setNebulaEnabled(boolean enabled) = 19;
+
     // Closes the uinput file descriptor and marks the device not ready.
     void destroy() = 16777114;
 }

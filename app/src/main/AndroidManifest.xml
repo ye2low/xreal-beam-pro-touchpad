@@ -19,6 +19,9 @@
     <!-- Package visibility: the starter command is built from Shizuku's own install paths. -->
     <queries>
         <package android:name="moe.shizuku.privileged.api" />
+        <!-- Nebula's enabled state is read straight from the package manager, so the switch
+             in settings shows the device's own truth rather than a remembered value. -->
+        <package android:name="com.xreal.evapro.nebula" />
     </queries>
 
     <application

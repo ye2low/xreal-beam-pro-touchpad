@@ -130,6 +130,8 @@ fun TouchpadScreen(viewModel: TouchpadViewModel) {
                 // What the display actually reports, not what was last saved.
                 glassesDensity = state.targetDisplay?.density ?: 0,
                 onGlassesDensity = viewModel::setGlassesDensity,
+                nebulaEnabled = state.nebulaEnabled,
+                onNebulaEnabled = viewModel::setNebulaEnabled,
                 onDismiss = viewModel::toggleSettings,
             )
         } else {
@@ -709,6 +711,8 @@ private fun SettingsPanel(
     onDexKeyboard: (Boolean) -> Unit,
     glassesDensity: Int,
     onGlassesDensity: (Int) -> Unit,
+    nebulaEnabled: Boolean,
+    onNebulaEnabled: (Boolean) -> Unit,
     onDismiss: () -> Unit,
 ) {
     Column(
@@ -732,6 +736,30 @@ private fun SettingsPanel(
         SettingSlider("Scroll Speed", scrollSpeed, 0.3f..1.3f, "%.1f×", onScrollSpeed)
 
         GlassesScale(current = glassesDensity, onChange = onGlassesDensity)
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text("Nebula", color = TEXT_DIM, fontSize = 14.sp)
+                Text(
+                    "Выключенная Nebula не перехватывает очки. Переключается в любой " +
+                        "момент. Проверь, не через неё ли у тебя меняется ultrawide.",
+                    color = TEXT_MUTED,
+                    fontSize = 11.sp,
+                )
+            }
+            Switch(
+                checked = nebulaEnabled,
+                onCheckedChange = onNebulaEnabled,
+                colors = SwitchDefaults.colors(
+                    checkedThumbColor = ACCENT,
+                    checkedTrackColor = ACCENT_DIM,
+                ),
+            )
+        }
 
         Row(
             modifier = Modifier.fillMaxWidth(),

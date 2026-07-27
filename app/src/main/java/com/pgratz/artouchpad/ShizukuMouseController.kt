@@ -37,7 +37,7 @@ class ShizukuMouseController {
     )
         .processNameSuffix("mouse")
         .daemon(false)
-        .version(18)  // bumped — showRecents and setDisplayDensity
+        .version(19)  // bumped — setNebulaEnabled
 
     private val connection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
@@ -189,4 +189,8 @@ class ShizukuMouseController {
     // Density override for one display; 0 restores the panel's own value.
     fun setDisplayDensity(displayId: Int, density: Int): Boolean =
         runCatching { service?.setDisplayDensity(displayId, density) ?: false }.getOrDefault(false)
+
+    // Turns XREAL's Nebula on or off, reversibly.
+    fun setNebulaEnabled(enabled: Boolean): Boolean =
+        runCatching { service?.setNebulaEnabled(enabled) ?: false }.getOrDefault(false)
 }

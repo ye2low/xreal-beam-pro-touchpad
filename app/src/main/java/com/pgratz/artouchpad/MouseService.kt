@@ -368,6 +368,20 @@ class MouseService : IMouseService.Stub() {
         false
     }
 
+    // Turns XREAL's Nebula on or off. `disable-user` rather than `disable`: it is the form
+    // shell is allowed to use, it applies to this user only, and `pm enable` undoes it.
+    override fun setNebulaEnabled(enabled: Boolean): Boolean = try {
+        val verb = if (enabled) "enable" else "disable-user"
+        val exit = Runtime.getRuntime()
+            .exec(arrayOf("pm", verb, "--user", "0", NEBULA_PACKAGE))
+            .waitFor()
+        Log.d(TAG, "setNebulaEnabled($enabled) exit=$exit")
+        exit == 0
+    } catch (e: Exception) {
+        Log.e(TAG, "setNebulaEnabled failed: $e")
+        false
+    }
+
     // Input: displayId and IME policy (0 = local, 1 = fallback, 2 = hide).
     // Calls IWindowManager.setDisplayImePolicy via reflection (there is no `wm` shell
     // subcommand for this). With policy 1 (fallback), a field focused on the target display
@@ -656,6 +670,7 @@ class MouseService : IMouseService.Stub() {
 
     companion object {
         private const val TAG = "MouseService"
+        private const val NEBULA_PACKAGE = "com.xreal.evapro.nebula"
 
         const val UI_SET_EVBIT  = 0x40045564
         const val UI_SET_KEYBIT = 0x40045565
