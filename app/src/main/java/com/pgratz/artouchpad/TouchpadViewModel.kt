@@ -26,7 +26,9 @@ import androidx.lifecycle.viewModelScope
 import com.pgratz.artouchpad.adb.AdbPairingService
 import com.pgratz.artouchpad.adb.ShizukuBootstrap
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlin.math.abs
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -43,6 +45,12 @@ private const val HOLD_TO_PRESS_MS = 240
 private const val HOLD_SLOP_PX = 25
 
 private const val NEBULA_PACKAGE = "com.xreal.evapro.nebula"
+
+// Fling: how much of each new frame's delta feeds the running average, how fast the replayed
+// velocity dies away per frame, and the speed below which it is not worth continuing.
+private const val FLING_SMOOTHING = 0.4f
+private const val FLING_DECAY = 0.94f
+private const val FLING_MIN_VELOCITY = 0.8f
 
 private const val KEY_DESKTOP_MODE = "force_desktop_mode_on_external_displays"
 private const val KEY_FREEFORM = "enable_freeform_support"
@@ -74,6 +82,8 @@ data class TouchpadState(
     val sensitivity: Float = 0.5f,
     val scrollSpeed: Float = 0.8f,
     val naturalScroll: Boolean = false,
+    // Keeps the content moving after the fingers leave, slowing to a stop.
+    val scrollInertia: Boolean = false,
     val showSettings: Boolean = false,
     val touchMode: TouchMode = TouchMode.IDLE,
     val showKeyboard: Boolean = false,
@@ -112,6 +122,7 @@ class TouchpadViewModel(app: Application) : AndroidViewModel(app) {
         sensitivity = prefs.getFloat("sensitivity", 0.5f),
         scrollSpeed = prefs.getFloat("scroll_speed", 0.8f),
         naturalScroll = prefs.getBoolean("natural_scroll", false),
+        scrollInertia = prefs.getBoolean("scroll_inertia", false),
         dexKeyboardEnabled = prefs.getBoolean("dex_keyboard", true),
         glassesDensity = prefs.getInt("glasses_density", 0),
     ))
@@ -291,6 +302,7 @@ class TouchpadViewModel(app: Application) : AndroidViewModel(app) {
     // light for fast moves) before scaling by sensitivity. This suppresses finger
     // tremor on precise movements without adding noticeable lag on fast sweeps.
     fun moveCursor(rawDx: Float, rawDy: Float) {
+        stopFling()
         val speed = kotlin.math.sqrt(rawDx * rawDx + rawDy * rawDy)
         val alpha = (speed / 8f).coerceIn(0.30f, 0.85f)
         smoothDx = alpha * rawDx + (1f - alpha) * smoothDx
@@ -316,12 +328,20 @@ class TouchpadViewModel(app: Application) : AndroidViewModel(app) {
     // Updates touchMode in state, which drives the cursor/scroll indicator shown in the status bar.
     // Resets the smoothing filter on IDLE so the decaying tail doesn't bleed into the next touch.
     fun setTouchMode(mode: TouchMode) {
-        if (mode == TouchMode.IDLE) { smoothDx = 0f; smoothDy = 0f }
+        if (mode == TouchMode.IDLE) {
+            smoothDx = 0f; smoothDy = 0f
+            startFling()
+            lastGestureWasScroll = false
+            flingVx = 0f; flingVy = 0f
+        }
         _state.update { it.copy(touchMode = mode) }
     }
 
     // Delegate clicks to MouseService at the current tracked cursor position.
-    fun performClick() = mouse.click(_state.value.cursorX, _state.value.cursorY)
+    fun performClick() {
+        stopFling()
+        mouse.click(_state.value.cursorX, _state.value.cursorY)
+    }
     fun performDoubleClick() = mouse.doubleClick(_state.value.cursorX, _state.value.cursorY)
     fun performRightClick() = mouse.rightClick(_state.value.cursorX, _state.value.cursorY)
 
@@ -376,10 +396,49 @@ class TouchpadViewModel(app: Application) : AndroidViewModel(app) {
     // Applies scrollSpeed multiplier and natural-scroll direction inversion, then
     // forwards the adjusted delta to MouseService for wheel-detent conversion.
     fun performScroll(dx: Float, dy: Float) {
+        stopFling()
+        // A running average of the per-frame delta, which is what the fling below replays.
+        // Pointer events arrive about once per frame, so this is already in the right units.
+        flingVx = FLING_SMOOTHING * dx + (1f - FLING_SMOOTHING) * flingVx
+        flingVy = FLING_SMOOTHING * dy + (1f - FLING_SMOOTHING) * flingVy
+        lastGestureWasScroll = true
+        emitScroll(dx, dy)
+        _state.update { it.copy(touchMode = TouchMode.SCROLL) }
+    }
+
+    private fun emitScroll(dx: Float, dy: Float) {
         val speed = _state.value.scrollSpeed
         val dir = if (_state.value.naturalScroll) 1f else -1f
         mouse.scroll(dx * speed * dir, dy * speed * dir)
-        _state.update { it.copy(touchMode = TouchMode.SCROLL) }
+    }
+
+    // Keeps the content moving after the fingers leave, slowing to a stop — the way a phone
+    // behaves. The wheel is detented, so this reads as scroll steps that thin out rather than
+    // as a genuinely smooth glide; that is a property of the mouse wheel, not of the decay.
+    private var flingJob: Job? = null
+    private var flingVx = 0f
+    private var flingVy = 0f
+    private var lastGestureWasScroll = false
+
+    private fun startFling() {
+        if (!_state.value.scrollInertia || !lastGestureWasScroll) return
+        var vx = flingVx
+        var vy = flingVy
+        if (abs(vx) + abs(vy) < FLING_MIN_VELOCITY) return
+        flingJob = viewModelScope.launch {
+            while (abs(vx) + abs(vy) >= FLING_MIN_VELOCITY) {
+                emitScroll(vx, vy)
+                vx *= FLING_DECAY
+                vy *= FLING_DECAY
+                delay(16)
+            }
+        }
+    }
+
+    // Touching the pad stops a fling in progress, the way catching a spinning page does.
+    fun stopFling() {
+        flingJob?.cancel()
+        flingJob = null
     }
 
     // Forwards an Android keycode to MouseService for injection on the glasses display.
@@ -431,6 +490,11 @@ class TouchpadViewModel(app: Application) : AndroidViewModel(app) {
     fun setNaturalScroll(v: Boolean) {
         prefs.edit().putBoolean("natural_scroll", v).apply()
         _state.update { it.copy(naturalScroll = v) }
+    }
+    fun setScrollInertia(v: Boolean) {
+        prefs.edit().putBoolean("scroll_inertia", v).apply()
+        if (!v) stopFling()
+        _state.update { it.copy(scrollInertia = v) }
     }
     fun setDexKeyboard(v: Boolean) {
         prefs.edit().putBoolean("dex_keyboard", v).apply()

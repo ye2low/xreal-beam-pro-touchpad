@@ -128,6 +128,8 @@ fun TouchpadScreen(viewModel: TouchpadViewModel) {
                 onSensitivity = viewModel::setSensitivity,
                 onScrollSpeed = viewModel::setScrollSpeed,
                 onNaturalScroll = viewModel::setNaturalScroll,
+                scrollInertia = state.scrollInertia,
+                onScrollInertia = viewModel::setScrollInertia,
                 onDexKeyboard = viewModel::setDexKeyboard,
                 // What the display actually reports, not what was last saved.
                 glassesDensity = state.targetDisplay?.density ?: 0,
@@ -749,6 +751,8 @@ private fun SettingsPanel(
     onSensitivity: (Float) -> Unit,
     onScrollSpeed: (Float) -> Unit,
     onNaturalScroll: (Boolean) -> Unit,
+    scrollInertia: Boolean,
+    onScrollInertia: (Boolean) -> Unit,
     onDexKeyboard: (Boolean) -> Unit,
     glassesDensity: Int,
     onGlassesDensity: (Int) -> Unit,
@@ -830,26 +834,20 @@ private fun SettingsPanel(
             )
         }
 
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Column {
-                Text("Natural Scroll", color = TEXT_DIM, fontSize = 14.sp)
-                Text("Content follows finger direction", color = TEXT_MUTED, fontSize = 11.sp)
-            }
-            Switch(
-                checked = naturalScroll,
-                onCheckedChange = onNaturalScroll,
-                colors = SwitchDefaults.colors(
-                    checkedThumbColor = ACCENT,
-                    checkedTrackColor = ACCENT_DIM,
-                    uncheckedThumbColor = TEXT_DIM,
-                    uncheckedTrackColor = Color(0xFF263545),
-                ),
-            )
-        }
+        SettingSwitch(
+            title = "Natural Scroll",
+            subtitle = "Content follows finger direction",
+            checked = naturalScroll,
+            onChange = onNaturalScroll,
+        )
+
+        SettingSwitch(
+            title = "Инерция прокрутки",
+            subtitle = "Содержимое едет дальше после отрыва пальцев и замедляется. " +
+                "Касание пада останавливает.",
+            checked = scrollInertia,
+            onChange = onScrollInertia,
+        )
 
         Row(
             modifier = Modifier.fillMaxWidth(),
