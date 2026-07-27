@@ -334,17 +334,33 @@ class TouchpadViewModel(app: Application) : AndroidViewModel(app) {
     // window receives no touch at all, so it cannot know anything by itself.
     private var watchStarted = false
 
+    private var holdPollJob: kotlinx.coroutines.Job? = null
+
     fun ensurePanelWatch() {
         if (watchStarted || !_state.value.mouseReady) return
         watchStarted = true
         mouse.startPanelWatch(_state.value.sensitivity, HOLD_TO_PRESS_MS, HOLD_SLOP_PX)
-        viewModelScope.launch {
+        holdPollJob?.cancel()
+        holdPollJob = viewModelScope.launch {
             while (true) {
                 delay(50)
                 val held = mouse.isLeftHeld()
                 if (held != _state.value.leftHeld) _state.update { it.copy(leftHeld = held) }
             }
         }
+    }
+
+    // Stops watching the panel while the touchpad is not on screen. The service reads
+    // /dev/input directly, so without this it keeps treating any finger resting anywhere on
+    // the phone as a held mouse button — scrolling a settings list would drag the cursor
+    // around the glasses. stopPanelWatch releases the button first, so nothing is left down.
+    fun pausePanelWatch() {
+        if (!watchStarted) return
+        watchStarted = false
+        holdPollJob?.cancel()
+        holdPollJob = null
+        mouse.stopPanelWatch()
+        _state.update { it.copy(leftHeld = false) }
     }
 
     // Presses BTN_LEFT without releasing; moveCursor calls while held extend a text selection.

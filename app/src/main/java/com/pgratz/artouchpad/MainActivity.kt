@@ -63,4 +63,14 @@ class MainActivity : ComponentActivity() {
         viewModel.refresh()
         viewModel.startShizukuIfNeeded()
     }
+
+    // The mouse service reads the touchscreen straight from /dev/input, so it goes on
+    // turning a resting finger into a held mouse button even when the touchpad is not the
+    // app on screen. That makes the phone itself unusable — scrolling a settings list drags
+    // the cursor across the glasses, and an icon on the home screen cannot be picked up at
+    // all. The panel is only ours while we are in front of the user.
+    override fun onPause() {
+        super.onPause()
+        viewModel.pausePanelWatch()
+    }
 }
