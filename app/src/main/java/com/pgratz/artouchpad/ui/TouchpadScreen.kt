@@ -160,6 +160,7 @@ fun TouchpadScreen(viewModel: TouchpadViewModel) {
                 onMoveCursor = viewModel::moveCursor,
                 onClick = { viewModel.performClick() },
                 onDoubleClick = { viewModel.performDoubleClick() },
+                onRightClick = { viewModel.performRightClick() },
                 onScroll = viewModel::performScroll,
                 onPinch = viewModel::pinchZoom,
                 onTouchModeChanged = viewModel::setTouchMode,
@@ -452,6 +453,7 @@ private fun TouchpadSurface(
     onMoveCursor: (Float, Float) -> Unit,
     onClick: () -> Unit,
     onDoubleClick: () -> Unit,
+    onRightClick: () -> Unit,
     onScroll: (Float, Float) -> Unit,
     onPinch: (Float) -> Unit,
     onTouchModeChanged: (TouchMode) -> Unit,
@@ -485,6 +487,9 @@ private fun TouchpadSurface(
                     var didMove = false
                     var lastTapTime = 0L
                     var lastLoggedFingers = -1
+                    // The most fingers seen during this gesture, which is what tells a
+                    // two-finger tap from a one-finger one at the moment of release.
+                    var maxFingers = 0
 
                     coroutineScope {
                         awaitPointerEventScope {
@@ -512,11 +517,15 @@ private fun TouchpadSurface(
                                 if (justPressed.isNotEmpty() && pressed.size == 1) {
                                     downTime = now
                                     didMove = false
+                                    maxFingers = 0
                                     lastPositions = pressed.associate { it.id to it.position }
                                     // No long-press timer: a real touchpad has no such
                                     // gesture, and here it only got in the way — resting a
                                     // finger buzzed and then behaved like a stray click.
                                 }
+                                // Remembered for the whole gesture, since by the time the
+                                // fingers lift there is nothing left to count.
+                                if (pressed.size > maxFingers) maxFingers = pressed.size
 
                                 when (pressed.size) {
                                     1 -> {
@@ -571,11 +580,17 @@ private fun TouchpadSurface(
                                     val duration = now - downTime
                                     onTouchModeChanged(TouchMode.IDLE)
 
-                                    // A quick tap that went nowhere is a left click, the same
-                                    // as tapping a physical touchpad. Holding still is not a
-                                    // gesture here — that is what the button below is for.
+                                    // A quick tap that went nowhere is a click, the same as
+                                    // tapping a physical touchpad — with two fingers it is
+                                    // the right button, which is the gesture every trackpad
+                                    // uses and which sends a genuine BTN_RIGHT, so a browser
+                                    // opens the same context menu a real mouse would.
+                                    // Holding still is not a gesture here; that is the hold.
                                     if (!didMove && duration < TAP_MAX_MS) {
-                                        if (now - lastTapTime < DOUBLE_TAP_WINDOW_MS) {
+                                        if (maxFingers >= 2) {
+                                            onRightClick()
+                                            lastTapTime = 0L
+                                        } else if (now - lastTapTime < DOUBLE_TAP_WINDOW_MS) {
                                             onDoubleClick()
                                             lastTapTime = 0L
                                         } else {
@@ -979,6 +994,7 @@ private fun SettingsPanel(
             // resizes them; the old right-click and text-select gestures are gone.
             GestureHint("1 finger hold", "Hold left button")
             GestureHint("1 finger hold + drag", "Drag window / resize")
+            GestureHint("2 finger tap", "Right click")
             GestureHint("2 finger drag", "Scroll")
             GestureHint("2 finger pinch", "Zoom page")
         }
