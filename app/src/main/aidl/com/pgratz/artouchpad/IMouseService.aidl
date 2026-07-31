@@ -131,6 +131,15 @@ interface IMouseService {
     void pinchUpdate(float spanDelta) = 24;
     void pinchEnd() = 25;
 
+    // Swaps the virtual device between mouse and touchpad. As a touchpad, Android itself
+    // recognises the gestures — scroll, pinch, tap, two-finger tap, multi-finger swipes —
+    // and its scrolling is a synthetic finger drag rather than wheel detents, so apps fling
+    // it the way they fling a finger. The two cannot coexist on one device: BTN_LEFT is also
+    // BTN_MOUSE, so relative axes beside absolute ones would build both mappers at once.
+    // maxX/maxY are the panel's axis maxima; resX/resY its resolution in units per mm, which
+    // is the ruler every gesture threshold is measured against.
+    boolean setTouchpadMode(boolean enabled, int maxX, int maxY, int resX, int resY) = 26;
+
     // Closes the uinput file descriptor and marks the device not ready.
     void destroy() = 16777114;
 }

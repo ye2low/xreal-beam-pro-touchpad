@@ -111,6 +111,96 @@ class MouseService : IMouseService.Stub() {
         initUinput()
     }
 
+    // Geometry of the physical panel, as the virtual touchpad reports it: axis maxima in
+    // panel units and resolution in units per millimetre. The resolution is what every
+    // gesture threshold is scaled by, so a wrong value makes the library judge distances
+    // against the wrong ruler.
+    private var padMaxX = 1079
+    private var padMaxY = 2399
+    private var padResX = 16
+    private var padResY = 16
+    @Volatile private var touchpadMode = false
+
+    // Swaps the virtual device between mouse and touchpad. They cannot coexist on one
+    // device — BTN_LEFT is also BTN_MOUSE, so relative axes next to absolute ones would give
+    // Android both a cursor mapper and a touchpad mapper, moving the pointer twice.
+    override fun setTouchpadMode(enabled: Boolean, maxX: Int, maxY: Int, resX: Int, resY: Int): Boolean {
+        if (enabled == touchpadMode && uinputReady) return true
+        padMaxX = maxX; padMaxY = maxY
+        padResX = resX; padResY = resY
+        stopPanelWatch()
+        UinputNative.nClose()
+        uinputReady = false
+        touchpadMode = enabled
+        if (enabled) {
+            uinputReady = initTouchpad()
+        } else {
+            initUinput()
+        }
+        Log.i(TAG, "setTouchpadMode($enabled) ready=$uinputReady")
+        return uinputReady
+    }
+
+    // Declares the virtual device as a TOUCHPAD rather than a mouse, which hands every
+    // gesture to Android itself: two-finger scroll, pinch, tap-to-click, two-finger tap as
+    // right click, three- and four-finger swipes, palm rejection, pointer acceleration. The
+    // scroll it produces is a synthetic finger drag rather than wheel detents, so apps apply
+    // their own fling — the same motion a finger on the screen produces.
+    //
+    // Three declarations are load-bearing and easy to get wrong:
+    //   * INPUT_PROP_POINTER is what separates a touchpad from a touchscreen. Without it the
+    //     device drives absolute touches; with INPUT_PROP_DIRECT it certainly would.
+    //   * No EV_REL at all. BTN_LEFT is also BTN_MOUSE, so relative axes alongside the
+    //     absolute ones would have Android build a cursor mapper *and* a touchpad mapper on
+    //     the same device, and the pointer would move twice per gesture.
+    //   * No stylus tool buttons. Any of BTN_TOOL_PEN..AIRBRUSH silently demotes the device
+    //     to a plain multitouch surface, with nothing logged to say why.
+    private fun initTouchpad(): Boolean {
+        val fd = UinputNative.nOpen()
+        if (fd < 0) { Log.e(TAG, "nOpen failed"); return false }
+
+        fun ioctl(req: Int, value: Int) {
+            val r = UinputNative.nIoctl(req, value)
+            if (r < 0) Log.w(TAG, "ioctl(0x${req.toString(16)}, $value) returned $r")
+        }
+
+        ioctl(UI_SET_PROPBIT, INPUT_PROP_POINTER)
+        ioctl(UI_SET_PROPBIT, INPUT_PROP_BUTTONPAD)
+
+        ioctl(UI_SET_EVBIT, EV_SYN)
+        ioctl(UI_SET_EVBIT, EV_KEY)
+        ioctl(UI_SET_EVBIT, EV_ABS)
+
+        // The finger-count buttons are not decoration: Android reads exactly these to decide
+        // how many fingers are down, and a gesture with no BTN_TOOL_* set counts as zero.
+        ioctl(UI_SET_KEYBIT, BTN_TOUCH)
+        ioctl(UI_SET_KEYBIT, BTN_TOOL_FINGER)
+        ioctl(UI_SET_KEYBIT, BTN_TOOL_DOUBLETAP)
+        ioctl(UI_SET_KEYBIT, BTN_TOOL_TRIPLETAP)
+        ioctl(UI_SET_KEYBIT, BTN_TOOL_QUADTAP)
+        ioctl(UI_SET_KEYBIT, BTN_LEFT)
+        ioctl(UI_SET_KEYBIT, BTN_RIGHT)
+
+        ioctl(UI_SET_ABSBIT, ABS_MT_SLOT)
+        ioctl(UI_SET_ABSBIT, ABS_MT_TRACKING_ID)
+        ioctl(UI_SET_ABSBIT, ABS_MT_POSITION_X)
+        ioctl(UI_SET_ABSBIT, ABS_MT_POSITION_Y)
+        ioctl(UI_SET_ABSBIT, ABS_MT_PRESSURE)
+
+        UinputNative.nAbsSetup(ABS_MT_SLOT, 0, MAX_SLOTS - 1, 0)
+        UinputNative.nAbsSetup(ABS_MT_TRACKING_ID, 0, 65535, 0)
+        UinputNative.nAbsSetup(ABS_MT_POSITION_X, 0, padMaxX, padResX)
+        UinputNative.nAbsSetup(ABS_MT_POSITION_Y, 0, padMaxY, padResY)
+        UinputNative.nAbsSetup(ABS_MT_PRESSURE, 0, 255, 0)
+
+        if (UinputNative.nDevSetup("AR Touchpad Pad") < 0) return false
+        ioctl(UI_DEV_CREATE, 0)
+
+        Thread.sleep(400)
+        Log.i(TAG, "touchpad device ready: ${padMaxX}x$padMaxY res=$padResX/$padResY")
+        return true
+    }
+
     // Opens /dev/uinput via JNI, declares mouse capabilities (REL_X/Y, wheel, buttons),
     // writes the device name, and issues UI_DEV_CREATE. Waits 400 ms for InputReader to
     // enumerate the new device before marking uinputReady = true.
@@ -755,6 +845,11 @@ class MouseService : IMouseService.Stub() {
                 }
                 if (type != EV_SYN || code != SYN_REPORT) continue
 
+                if (touchpadMode) {
+                    relayFrame(contacts, maxY)
+                    continue
+                }
+
                 for (c in contacts.values) {
                     if (!c.placed) {
                         // First complete frame for this contact: this is where it landed.
@@ -813,6 +908,50 @@ class MouseService : IMouseService.Stub() {
         }
     }
 
+    // Forwards one frame of real fingers to the virtual touchpad, so Android sees the phone's
+    // glass as a trackpad and does the gesture work itself. Protocol B: a slot is addressed,
+    // then its tracking id and coordinates follow.
+    //
+    // Fingers outside the touch surface are dropped rather than forwarded — the keyboard is
+    // below it, and a key held down there is a key, not a finger on the pad.
+    private var relaySlots = HashMap<Int, Boolean>()
+
+    private fun relayFrame(contacts: Map<Int, Contact>, maxY: Int) {
+        val onPad = contacts.filterValues { c ->
+            c.placed && (maxY <= 0 || (c.y.toFloat() / maxY).let { it >= padTop && it <= padBottom })
+        }
+
+        // Retire slots whose finger has gone, then publish the ones still down.
+        for ((slot, live) in relaySlots.entries.toList()) {
+            if (live && !onPad.containsKey(slot)) {
+                ev(EV_ABS, ABS_MT_SLOT, slot)
+                ev(EV_ABS, ABS_MT_TRACKING_ID, -1)
+                relaySlots[slot] = false
+            }
+        }
+        for ((slot, c) in onPad) {
+            if (slot >= MAX_SLOTS) continue
+            ev(EV_ABS, ABS_MT_SLOT, slot)
+            if (relaySlots[slot] != true) {
+                ev(EV_ABS, ABS_MT_TRACKING_ID, slot)
+                relaySlots[slot] = true
+            }
+            ev(EV_ABS, ABS_MT_POSITION_X, c.x.coerceIn(0, padMaxX))
+            ev(EV_ABS, ABS_MT_POSITION_Y, c.y.coerceIn(0, padMaxY))
+            ev(EV_ABS, ABS_MT_PRESSURE, 128)
+        }
+
+        // Android counts fingers from these buttons alone, not from the slots — a frame with
+        // no BTN_TOOL_* set reads as nothing touching, however many slots are live.
+        val n = onPad.size
+        ev(EV_KEY, BTN_TOUCH, if (n > 0) 1 else 0)
+        ev(EV_KEY, BTN_TOOL_FINGER, if (n == 1) 1 else 0)
+        ev(EV_KEY, BTN_TOOL_DOUBLETAP, if (n == 2) 1 else 0)
+        ev(EV_KEY, BTN_TOOL_TRIPLETAP, if (n == 3) 1 else 0)
+        ev(EV_KEY, BTN_TOOL_QUADTAP, if (n >= 4) 1 else 0)
+        sync()
+    }
+
     private fun releaseHold() {
         if (!leftHeld) return
         leftHeld = false
@@ -837,6 +976,18 @@ class MouseService : IMouseService.Stub() {
             "force_desktop_mode_on_external_displays",
             "enable_freeform_support",
         )
+
+        // How many fingers the pad reports, and the axis codes a touchpad needs.
+        const val MAX_SLOTS = 5
+        const val UI_SET_PROPBIT = 0x4004556e
+        const val UI_SET_ABSBIT  = 0x40045567
+        const val INPUT_PROP_POINTER = 0x00
+        const val INPUT_PROP_BUTTONPAD = 0x02
+        const val BTN_TOOL_FINGER = 0x145
+        const val BTN_TOOL_DOUBLETAP = 0x14d
+        const val BTN_TOOL_TRIPLETAP = 0x14e
+        const val BTN_TOOL_QUADTAP = 0x14f
+        const val ABS_MT_PRESSURE = 0x3a
 
         const val UI_SET_EVBIT  = 0x40045564
         const val UI_SET_KEYBIT = 0x40045565

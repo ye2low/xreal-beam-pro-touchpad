@@ -37,7 +37,7 @@ class ShizukuMouseController {
     )
         .processNameSuffix("mouse")
         .daemon(false)
-        .version(22)  // bumped — scrollFine and the pinch stream
+        .version(23)  // bumped — setTouchpadMode
 
     private val connection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
@@ -203,6 +203,13 @@ class ShizukuMouseController {
     fun pinchBegin() { runCatching { service?.pinchBegin() } }
     fun pinchUpdate(spanDelta: Float) { runCatching { service?.pinchUpdate(spanDelta) } }
     fun pinchEnd() { runCatching { service?.pinchEnd() } }
+
+    // Swaps the virtual device between mouse and touchpad; as a touchpad Android does the
+    // gesture recognition itself.
+    fun setTouchpadMode(enabled: Boolean, maxX: Int, maxY: Int, resX: Int, resY: Int): Boolean =
+        runCatching {
+            service?.setTouchpadMode(enabled, maxX, maxY, resX, resY) ?: false
+        }.getOrDefault(false)
 
     // The band of the screen the touch surface occupies; the hold ignores anything outside it.
     fun setPanelBounds(topFraction: Float, bottomFraction: Float) {

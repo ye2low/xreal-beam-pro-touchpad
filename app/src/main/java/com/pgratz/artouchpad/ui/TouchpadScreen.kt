@@ -150,12 +150,17 @@ fun TouchpadScreen(viewModel: TouchpadViewModel) {
                 onFreeformWindows = viewModel::setFreeformWindows,
                 autoDesktop = state.autoDesktop,
                 onAutoDesktop = viewModel::setAutoDesktop,
+                touchpadMode = state.touchpadMode,
+                onTouchpadMode = viewModel::setTouchpadMode,
                 onDismiss = viewModel::toggleSettings,
             )
         } else {
             TouchpadSurface(
                 modifier = Modifier.weight(1f),
-                enabled = state.mouseReady,
+                // In touchpad mode the service forwards the raw finger stream to Android and
+                // the gestures are recognised there, so this surface must stay out of it —
+                // otherwise every movement would be applied twice.
+                enabled = state.mouseReady && !state.touchpadMode,
                 leftHeld = state.leftHeld,
                 onMoveCursor = viewModel::moveCursor,
                 onClick = { viewModel.performClick() },
@@ -858,6 +863,8 @@ private fun SettingsPanel(
     onFreeformWindows: (Boolean) -> Unit,
     autoDesktop: Boolean,
     onAutoDesktop: (Boolean) -> Unit,
+    touchpadMode: Boolean,
+    onTouchpadMode: (Boolean) -> Unit,
     onDismiss: () -> Unit,
 ) {
     Column(
@@ -917,6 +924,14 @@ private fun SettingsPanel(
         if (scrollInertia) {
             SettingSlider("Coast time", inertiaSeconds, 0.3f..4.0f, "%.1f s", onInertiaSeconds)
         }
+
+        SettingSwitch(
+            title = "Native touchpad",
+            subtitle = "Present the device as a touchpad so Android recognises the gestures " +
+                "itself: smooth scrolling with real fling, pinch, multi-finger swipes.",
+            checked = touchpadMode,
+            onChange = onTouchpadMode,
+        )
 
         SectionHeader("Glasses")
         GlassesScale(current = glassesDensity, onChange = onGlassesDensity)

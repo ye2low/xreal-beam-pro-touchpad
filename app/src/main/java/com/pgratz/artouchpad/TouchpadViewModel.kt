@@ -126,6 +126,8 @@ data class TouchpadState(
     val freeformWindows: Boolean = false,
     // Runs the desktop-mode handover on its own when the glasses are plugged in.
     val autoDesktop: Boolean = true,
+    // Present the virtual device as a touchpad, so Android recognises the gestures itself.
+    val touchpadMode: Boolean = false,
 ) {
     val externalDisplayConnected get() = targetDisplay != null
     val displayWidth get() = targetDisplay?.width ?: 1920
@@ -145,6 +147,7 @@ class TouchpadViewModel(app: Application) : AndroidViewModel(app) {
         smoothScroll = prefs.getBoolean("smooth_scroll", false),
         smoothZoom = prefs.getBoolean("smooth_zoom", false),
         autoDesktop = prefs.getBoolean("auto_desktop", true),
+        touchpadMode = prefs.getBoolean("touchpad_mode", false),
         dexKeyboardEnabled = prefs.getBoolean("dex_keyboard", true),
         glassesDensity = prefs.getInt("glasses_density", 0),
     ))
@@ -648,6 +651,32 @@ class TouchpadViewModel(app: Application) : AndroidViewModel(app) {
 
     fun setDesktopMode(enabled: Boolean) = setFlag(KEY_DESKTOP_MODE, enabled)
     fun setFreeformWindows(enabled: Boolean) = setFlag(KEY_FREEFORM, enabled)
+
+    // As a touchpad the whole gesture layer in this app goes unused: Android recognises
+    // scroll, pinch, taps and multi-finger swipes from the raw finger stream the service
+    // relays to it, and its scrolling is a finger drag rather than wheel detents, so apps
+    // fling it themselves.
+    fun setTouchpadMode(enabled: Boolean) {
+        prefs.edit().putBoolean("touchpad_mode", enabled).apply()
+        _state.update { it.copy(touchpadMode = enabled) }
+        applyTouchpadMode()
+    }
+
+    private fun applyTouchpadMode() {
+        val metrics = getApplication<Application>().resources.displayMetrics
+        viewModelScope.launch(Dispatchers.IO) {
+            mouse.setTouchpadMode(
+                _state.value.touchpadMode,
+                metrics.widthPixels - 1,
+                metrics.heightPixels - 1,
+                // Units per millimetre. The panel reports resolution 0, so it is worked out
+                // from the screen's own dpi — panel units and screen pixels coincide here.
+                (metrics.xdpi / 25.4f).toInt().coerceAtLeast(1),
+                (metrics.ydpi / 25.4f).toInt().coerceAtLeast(1),
+            )
+            ensurePanelWatch()
+        }
+    }
 
     fun setAutoDesktop(enabled: Boolean) {
         prefs.edit().putBoolean("auto_desktop", enabled).apply()

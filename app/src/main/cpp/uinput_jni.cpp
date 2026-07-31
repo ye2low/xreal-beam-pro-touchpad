@@ -80,6 +80,46 @@ Java_com_pgratz_artouchpad_UinputNative_nWriteDevInfo(JNIEnv* env, jclass, jstri
     return (jint)n;
 }
 
+// Declares the range and physical resolution of one absolute axis, for a touchpad-class
+// device. The legacy uinput_user_dev path above cannot express resolution at all — its
+// struct has no field for it — and resolution is what the gesture library scales every
+// threshold by. Without it Android assumes 32 units per millimetre and every distance the
+// gestures are judged against is wrong.
+// resolution: units per millimetre.
+JNIEXPORT jint JNICALL
+Java_com_pgratz_artouchpad_UinputNative_nAbsSetup(
+        JNIEnv*, jclass, jint code, jint minimum, jint maximum, jint resolution) {
+    struct uinput_abs_setup abs;
+    memset(&abs, 0, sizeof(abs));
+    abs.code = (uint16_t)code;
+    abs.absinfo.minimum    = minimum;
+    abs.absinfo.maximum    = maximum;
+    abs.absinfo.resolution = resolution;
+    int ret = ioctl(g_fd, UI_ABS_SETUP, &abs);
+    if (ret < 0) LOGE("UI_ABS_SETUP(code=%d) failed errno=%d", code, errno);
+    return ret;
+}
+
+// Creates the device through the modern UI_DEV_SETUP path, which is the one that must be
+// paired with UI_ABS_SETUP — the two cannot be mixed with the legacy write().
+JNIEXPORT jint JNICALL
+Java_com_pgratz_artouchpad_UinputNative_nDevSetup(JNIEnv* env, jclass, jstring jname) {
+    struct uinput_setup setup;
+    memset(&setup, 0, sizeof(setup));
+    const char* name = env->GetStringUTFChars(jname, nullptr);
+    strncpy(setup.name, name, UINPUT_MAX_NAME_SIZE - 1);
+    env->ReleaseStringUTFChars(jname, name);
+    // BUS_VIRTUAL is honest about what this is, and Android's classification does not
+    // depend on the bus type.
+    setup.id.bustype = BUS_VIRTUAL;
+    setup.id.vendor  = 0x1234;
+    setup.id.product = 0x5679;
+    setup.id.version = 1;
+    int ret = ioctl(g_fd, UI_DEV_SETUP, &setup);
+    if (ret < 0) LOGE("UI_DEV_SETUP failed errno=%d", errno);
+    return ret;
+}
+
 // Hot-path function: writes a single struct input_event{type, code, value} to g_fd.
 // Timestamps each event with gettimeofday so the kernel input layer sees valid timing.
 // Called once per EV_REL/EV_KEY event and once per EV_SYN/SYN_REPORT flush.

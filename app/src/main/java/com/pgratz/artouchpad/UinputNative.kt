@@ -58,6 +58,12 @@ object UinputNative {
     @JvmStatic external fun nIoctl(request: Int, value: Int): Int
     // Writes the device name + USB identity struct to the uinput fd; returns bytes written.
     @JvmStatic external fun nWriteDevInfo(name: String): Int
+    // Declares one absolute axis with its range and resolution in units per millimetre.
+    // Only the modern creation path can carry resolution, and the gesture library scales
+    // every threshold by it.
+    @JvmStatic external fun nAbsSetup(code: Int, min: Int, max: Int, resolution: Int): Int
+    // Creates the device through UI_DEV_SETUP, the path that pairs with nAbsSetup.
+    @JvmStatic external fun nDevSetup(name: String): Int
     // Writes one input_event{type, code, value} to the uinput fd; returns bytes written.
     @JvmStatic external fun nWriteEvent(type: Int, code: Int, value: Int): Int
     // Sends UI_DEV_DESTROY and closes the uinput fd.
