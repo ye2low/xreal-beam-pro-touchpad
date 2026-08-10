@@ -140,6 +140,13 @@ interface IMouseService {
     // is the ruler every gesture threshold is measured against.
     boolean setTouchpadMode(boolean enabled, int maxX, int maxY, int resX, int resY) = 26;
 
+    // Creates or tears down the virtual input device. It is not created at startup on
+    // purpose: a mouse that exists while no external display is attached puts its cursor
+    // on the phone's own screen, where it clicks the touchpad's own interface and drags
+    // the notification shade around — the pad ends up fighting itself. Tearing down
+    // releases any held button first, so nothing is left pressed.
+    boolean setDeviceEnabled(boolean enabled) = 27;
+
     // Closes the uinput file descriptor and marks the device not ready.
     void destroy() = 16777114;
 }

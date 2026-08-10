@@ -152,6 +152,8 @@ fun TouchpadScreen(viewModel: TouchpadViewModel) {
                 onAutoDesktop = viewModel::setAutoDesktop,
                 touchpadMode = state.touchpadMode,
                 onTouchpadMode = viewModel::setTouchpadMode,
+                cursorOnPhone = state.cursorOnPhone,
+                onCursorOnPhone = viewModel::setCursorOnPhone,
                 onDismiss = viewModel::toggleSettings,
             )
         } else {
@@ -160,7 +162,12 @@ fun TouchpadScreen(viewModel: TouchpadViewModel) {
                 // In touchpad mode the service forwards the raw finger stream to Android and
                 // the gestures are recognised there, so this surface must stay out of it —
                 // otherwise every movement would be applied twice.
-                enabled = state.mouseReady && !state.touchpadMode,
+                //
+                // deviceActive is what keeps the pad dead until the glasses are connected:
+                // there is no virtual mouse before that, and a cursor on the phone's own
+                // screen would drive the very interface the finger is touching.
+                enabled = state.mouseReady && state.deviceActive && !state.touchpadMode,
+                waitingForGlasses = !state.deviceActive && !state.cursorOnPhone,
                 leftHeld = state.leftHeld,
                 onMoveCursor = viewModel::moveCursor,
                 onClick = { viewModel.performClick() },
@@ -454,6 +461,9 @@ private fun StatusDot(active: Boolean, label: String) {
 private fun TouchpadSurface(
     modifier: Modifier,
     enabled: Boolean,
+    // Disabled because nothing is connected yet, as opposed to disabled for any other
+    // reason — the pad says so rather than just sitting there grey and unexplained.
+    waitingForGlasses: Boolean = false,
     leftHeld: Boolean,
     onMoveCursor: (Float, Float) -> Unit,
     onClick: () -> Unit,
@@ -654,12 +664,23 @@ private fun TouchpadSurface(
             }
         }
 
-        // Disabled overlay text (outside Canvas, inside Box)
+        // Disabled overlay text (outside Canvas, inside Box). Waiting for the glasses is the
+        // ordinary state, not a fault, so it says what it is waiting for rather than sending
+        // anyone off to check Shizuku.
         if (!enabled) {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Text("Touchpad Disabled", color = TEXT_MUTED, fontSize = 18.sp)
+                Text(
+                    if (waitingForGlasses) "Waiting for the glasses" else "Touchpad Disabled",
+                    color = TEXT_MUTED,
+                    fontSize = 18.sp,
+                )
                 Spacer(modifier = Modifier.height(4.dp))
-                Text("Grant Shizuku permission to activate", color = Color(0xFF37474F), fontSize = 14.sp)
+                Text(
+                    if (waitingForGlasses) "The cursor never lands on this screen"
+                    else "Grant Shizuku permission to activate",
+                    color = Color(0xFF37474F),
+                    fontSize = 14.sp,
+                )
             }
         }
     }
@@ -865,6 +886,8 @@ private fun SettingsPanel(
     onAutoDesktop: (Boolean) -> Unit,
     touchpadMode: Boolean,
     onTouchpadMode: (Boolean) -> Unit,
+    cursorOnPhone: Boolean,
+    onCursorOnPhone: (Boolean) -> Unit,
     onDismiss: () -> Unit,
 ) {
     Column(
@@ -934,6 +957,14 @@ private fun SettingsPanel(
         )
 
         SectionHeader("Glasses")
+        SettingSwitch(
+            title = "Cursor on the phone",
+            subtitle = "Off, the virtual mouse exists only while the glasses are connected " +
+                "and the pad stays dead until then. On, the cursor appears on this screen — " +
+                "where it clicks this very interface. For testing only.",
+            checked = cursorOnPhone,
+            onChange = onCursorOnPhone,
+        )
         GlassesScale(current = glassesDensity, onChange = onGlassesDensity)
         SettingSwitch(
             title = "Desktop on connect",

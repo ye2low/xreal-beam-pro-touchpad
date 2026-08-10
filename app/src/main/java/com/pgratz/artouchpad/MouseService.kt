@@ -107,9 +107,9 @@ class MouseService : IMouseService.Stub() {
         }.getOrNull()
     }
 
-    init {
-        initUinput()
-    }
+    // No device is created here. A virtual mouse that exists before the glasses do puts its
+    // cursor on the phone's own screen, and the app then clicks its own interface — see
+    // setDeviceEnabled, which the app calls once it has somewhere to put the cursor.
 
     // Geometry of the physical panel, as the virtual touchpad reports it: axis maxima in
     // panel units and resolution in units per millimetre. The resolution is what every
@@ -121,17 +121,46 @@ class MouseService : IMouseService.Stub() {
     private var padResY = 16
     @Volatile private var touchpadMode = false
 
+    // Whether the app wants a device at all. Kept separate from uinputReady so the touchpad
+    // mode can be changed while nothing is connected: the choice is remembered and applied
+    // the next time a device is actually created.
+    @Volatile private var deviceWanted = false
+
+    // Creates or tears down the virtual device. Nothing exists until the app asks, because a
+    // mouse with no external display puts its cursor on the phone's own screen — where it
+    // clicks the touchpad's own interface and drags the shade about.
+    override fun setDeviceEnabled(enabled: Boolean): Boolean {
+        deviceWanted = enabled
+        if (enabled == uinputReady) return uinputReady
+        if (enabled) {
+            if (touchpadMode) uinputReady = initTouchpad() else initUinput()
+        } else {
+            // Releases a held button before the descriptor goes away; otherwise whatever was
+            // being dragged on the glasses would stay stuck to a device that no longer exists.
+            stopPanelWatch()
+            UinputNative.nClose()
+            uinputReady = false
+            uinputDescriptor = null
+        }
+        Log.i(TAG, "setDeviceEnabled($enabled) ready=$uinputReady")
+        return uinputReady
+    }
+
     // Swaps the virtual device between mouse and touchpad. They cannot coexist on one
     // device — BTN_LEFT is also BTN_MOUSE, so relative axes next to absolute ones would give
     // Android both a cursor mapper and a touchpad mapper, moving the pointer twice.
     override fun setTouchpadMode(enabled: Boolean, maxX: Int, maxY: Int, resX: Int, resY: Int): Boolean {
-        if (enabled == touchpadMode && uinputReady) return true
+        val modeUnchanged = enabled == touchpadMode
         padMaxX = maxX; padMaxY = maxY
         padResX = resX; padResY = resY
+        touchpadMode = enabled
+        // With no device wanted there is nothing to rebuild: the mode is remembered and
+        // applied by setDeviceEnabled when the glasses turn up.
+        if (!deviceWanted) return false
+        if (modeUnchanged && uinputReady) return true
         stopPanelWatch()
         UinputNative.nClose()
         uinputReady = false
-        touchpadMode = enabled
         if (enabled) {
             uinputReady = initTouchpad()
         } else {

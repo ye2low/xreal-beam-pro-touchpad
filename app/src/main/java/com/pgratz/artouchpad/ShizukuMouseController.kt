@@ -37,7 +37,7 @@ class ShizukuMouseController {
     )
         .processNameSuffix("mouse")
         .daemon(false)
-        .version(23)  // bumped — setTouchpadMode
+        .version(24)  // bumped — setDeviceEnabled
 
     private val connection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
@@ -210,6 +210,11 @@ class ShizukuMouseController {
         runCatching {
             service?.setTouchpadMode(enabled, maxX, maxY, resX, resY) ?: false
         }.getOrDefault(false)
+
+    // Creates or tears down the virtual device. Nothing exists until there is a display to
+    // put a cursor on — see IMouseService for why.
+    fun setDeviceEnabled(enabled: Boolean): Boolean =
+        runCatching { service?.setDeviceEnabled(enabled) ?: false }.getOrDefault(false)
 
     // The band of the screen the touch surface occupies; the hold ignores anything outside it.
     fun setPanelBounds(topFraction: Float, bottomFraction: Float) {

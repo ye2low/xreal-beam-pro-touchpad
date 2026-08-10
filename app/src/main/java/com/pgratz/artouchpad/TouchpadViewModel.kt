@@ -62,6 +62,11 @@ private const val PIXELS_PER_DETENT = 60f
 // How long the desktop is given to establish itself before the flag is dropped.
 private const val DESKTOP_HANDOVER_MS = 4000L
 
+// Grace period between the glasses disappearing and the virtual device being torn down.
+// A cable that jogs in its socket drops the display for a moment, and rebuilding the device
+// every time would cost the cursor its position for no reason.
+private const val GLASSES_GRACE_MS = 5000L
+
 private const val KEY_DESKTOP_MODE = "force_desktop_mode_on_external_displays"
 private const val KEY_FREEFORM = "enable_freeform_support"
 
@@ -128,6 +133,13 @@ data class TouchpadState(
     val autoDesktop: Boolean = true,
     // Present the virtual device as a touchpad, so Android recognises the gestures itself.
     val touchpadMode: Boolean = false,
+    // Whether the virtual device currently exists. It is created only once there is a
+    // display to put the cursor on, so the pad is dead until the glasses are connected.
+    val deviceActive: Boolean = false,
+    // Escape hatch, off by default: lets the cursor live on the phone with no glasses
+    // attached. Useful for testing, useless for work — the cursor then clicks this very
+    // interface, and the pad ends up fighting itself.
+    val cursorOnPhone: Boolean = false,
 ) {
     val externalDisplayConnected get() = targetDisplay != null
     val displayWidth get() = targetDisplay?.width ?: 1920
@@ -148,6 +160,7 @@ class TouchpadViewModel(app: Application) : AndroidViewModel(app) {
         smoothZoom = prefs.getBoolean("smooth_zoom", false),
         autoDesktop = prefs.getBoolean("auto_desktop", true),
         touchpadMode = prefs.getBoolean("touchpad_mode", false),
+        cursorOnPhone = prefs.getBoolean("cursor_on_phone", false),
         dexKeyboardEnabled = prefs.getBoolean("dex_keyboard", true),
         glassesDensity = prefs.getInt("glasses_density", 0),
     ))
@@ -266,7 +279,69 @@ class TouchpadViewModel(app: Application) : AndroidViewModel(app) {
             if (hasExternal) releaseDesktopMode() else armDesktopMode()
         }
 
+        applyDevicePresence(hasExternal)
         ensurePanelWatch()
+    }
+
+    // The virtual device exists only while there is a display to put its cursor on. Without
+    // this the mouse was created as soon as the service bound, and with no glasses attached
+    // its cursor appeared on the phone — clicking the touchpad's own buttons, dragging the
+    // notification shade, and generally making the phone unusable by the hand holding it.
+    //
+    // Appearing is immediate; disappearing waits out GLASSES_GRACE_MS, so a cable that jogs
+    // in its socket does not cost the session its cursor.
+    private var deviceJob: Job? = null
+    private var deviceEnabled = false
+
+    private fun applyDevicePresence(hasExternal: Boolean) {
+        val wanted = hasExternal || _state.value.cursorOnPhone
+        if (wanted) {
+            deviceJob?.cancel()
+            deviceJob = null
+            if (!deviceEnabled) enableDevice()
+        } else if (deviceEnabled && deviceJob == null) {
+            deviceJob = viewModelScope.launch {
+                delay(GLASSES_GRACE_MS)
+                deviceJob = null
+                if (_state.value.targetDisplay == null && !_state.value.cursorOnPhone) {
+                    disableDevice()
+                }
+            }
+        }
+    }
+
+    private fun enableDevice() {
+        viewModelScope.launch(Dispatchers.IO) {
+            val ok = mouse.setDeviceEnabled(true)
+            deviceEnabled = ok
+            _state.update { it.copy(deviceActive = ok) }
+            if (!ok) return@launch
+            // The service is rebuilt from scratch on every bind, so the touchpad choice has
+            // to be re-applied to the device that was just created.
+            if (_state.value.touchpadMode) applyTouchpadMode()
+            // Only now does the device have a descriptor to pin to the display.
+            _state.value.targetDisplay?.let { mouse.setDisplay(it.id, it.width, it.height) }
+            ensurePanelWatch()
+        }
+    }
+
+    private fun disableDevice() {
+        pausePanelWatch()
+        viewModelScope.launch(Dispatchers.IO) {
+            mouse.setDeviceEnabled(false)
+            deviceEnabled = false
+            _state.update {
+                it.copy(deviceActive = false, leftHeld = false, touchMode = TouchMode.IDLE)
+            }
+        }
+    }
+
+    // Off by default, and deliberately awkward to want: with the cursor on the phone the pad
+    // drives the screen it is drawn on.
+    fun setCursorOnPhone(enabled: Boolean) {
+        prefs.edit().putBoolean("cursor_on_phone", enabled).apply()
+        _state.update { it.copy(cursorOnPhone = enabled) }
+        applyDevicePresence(_state.value.targetDisplay != null)
     }
 
     // Opens the Shizuku permission dialog so the user can grant shell-uid access.
@@ -391,7 +466,9 @@ class TouchpadViewModel(app: Application) : AndroidViewModel(app) {
     private var holdPollJob: kotlinx.coroutines.Job? = null
 
     fun ensurePanelWatch() {
-        if (watchStarted || !_state.value.mouseReady) return
+        // Nothing to watch for while no device exists: a finger resting on the pad would
+        // otherwise be held against a mouse button that has nowhere to go.
+        if (watchStarted || !_state.value.mouseReady || !deviceEnabled) return
         watchStarted = true
         mouse.startPanelWatch(_state.value.sensitivity, HOLD_TO_PRESS_MS, HOLD_SLOP_PX)
         pushPadBounds()
